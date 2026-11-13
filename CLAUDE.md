@@ -82,7 +82,7 @@ Dependencies flow `httpapi → application → domain ← postgres`. Adapters ma
 
 ## Workflow
 1. Unclear requirement → ask. Don't guess and build.
-2. Follow the current plan in `docs/superpowers/plans/`. Propose any change outside it first.
+2. Follow the current phase's plan in `docs/superpowers/plans/`. Each phase starts with its plan as the first commit on its branch, and no code is written before the plan is approved. Propose any change outside the plan first.
 3. Work in small steps, and run the single relevant test after each one.
 4. Before saying "done", make sure lint and all tests pass.
 5. Summarize what changed and what is left.

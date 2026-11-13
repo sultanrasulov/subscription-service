@@ -10,7 +10,7 @@ Once the service is implemented, the source of truth is:
 - the code and its tests, for behavior;
 - the generated Swagger specification, for the HTTP contract.
 
-This document then remains the record of intent and decisions. A step-by-step implementation plan is written separately.
+This document then remains the record of intent and decisions. Step-by-step implementation plans are written separately, one per phase, when that phase starts (§12).
 
 ## 1. Goal and scope
 
@@ -562,7 +562,7 @@ Make is the developer entry point. Go code still compiles without it, and the re
 - **Builder stage:** the Go Alpine image matching `go.mod`, plus `make`, which the image does not include. It downloads modules, then builds through `make build`. If Swagger generation fails, the image build fails, so a missing specification cannot slip through.
 - **Runtime stage:** Alpine, a non-root user, and the single static binary. Migrations and the Swagger specification are inside the binary. It exposes port 8080. BusyBox `wget` in the image serves the healthcheck.
 - **Signals:** the binary is started in exec form, so it is the container's main process and receives SIGTERM directly. A shell-form command would wrap it in `/bin/sh -c`, which does not forward the signal, and graceful shutdown would never run.
-- The implementation plan pins the exact image tags.
+- The phase 1 plan pins the exact image tags.
 
 ### 10.3 Compose files
 
@@ -618,11 +618,15 @@ Branch names follow `type/short-description`:
 - **Types:** `feature/`, `fix/`, `docs/`, `chore/`, `refactor/`. They are close to the Conventional Commits types (`feature/` ↔ `feat:`; the others share the name). There is no `test/` type, because tests ship with the code they cover.
 - **No ticket ID:** there is no issue tracker.
 - **Merging:** each phase lands through one pull request, merged with a merge commit, never squashed or rebased. Every commit, including the test-first steps, stays in `main`, and phase boundaries remain visible in the history.
-- **Phase 0** has no CI yet, so it merges once the spec and the implementation plan are approved.
+- **Plans:** each phase starts with its own implementation plan.
+  - It is written when the phase begins, not up front, so it builds on the code that exists by then.
+  - The plan is the first commit on the phase's branch (`docs/superpowers/plans/`). It is approved before any code is written, and it ships in the same pull request as the code.
+  - The table below is the roadmap; the plans hold the detail.
+- **Phase 0** has no CI yet, so it merges once the spec is approved.
 
 | Phase | Branch | Content | Done when |
 |---|---|---|---|
-| 0. Design | `docs/design` | This spec and the implementation plan | Both are approved |
+| 0. Design | `docs/design` | This spec and `CLAUDE.md` | The spec is approved |
 | 1. Walking skeleton | `feature/walking-skeleton` | Module and layout, Makefile, linter with depguard, configuration, logging, Postgres pool, first migration, HTTP server with middleware and timeouts, `/health` and `/ready`, problem+json for router errors, graceful shutdown, Swagger generation and UI (no endpoints yet), Dockerfile, compose files, CI | From a clean clone, `docker compose up --build` starts the stack, migrations are applied, `/health` and `/ready` return 200, Swagger UI opens, CI is green |
 | 2. Domain model | `feature/domain-model` | Value objects, aggregate, queries, ports, errors, written test-first | Domain tests pass; the domain depends only on the standard library and the UUID library |
 | 3. CRUDL | `feature/subscription-crudl` | Application service, Postgres repository, HTTP adapter with strict body decoding, Swagger annotations, delivered in slices: Create + Get, then List, Update, Delete | All five endpoints work through curl and Swagger UI; handler and repository tests pass; the smoke test now also requires at least one documented path |
@@ -652,7 +656,7 @@ Branch names follow `type/short-description`:
 
 ## Appendix A. Decision log
 
-While this document is a draft, every decision is written in its final form where it is first stated. Once the document is committed, numbers become permanent: they are never reused or shifted, and a decision that is later replaced or withdrawn keeps its number and is marked as such.
+While this document is a draft, every decision is written in its final form where it is first stated. Once the document is committed, numbers become permanent: they are never reused or shifted, and a decision that is later amended, replaced or withdrawn keeps its number and names the decision that changed it.
 
 | # | Topic | Decision |
 |---|---|---|
@@ -691,7 +695,7 @@ While this document is a draft, every decision is written in its final form wher
 | 33 | Tests | Domain unit tests, HTTP tests, testcontainers |
 | 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) |
 | 35 | Spec | `docs/design.md`, no code: intent, rules and decisions |
-| 36 | Branches | One short-lived branch per phase, named `type/short-description` (lowercase, hyphens, no ticket ID). One pull request per phase, merged into `main` with a merge commit (no squash) when CI is green. Phase 0, which has no CI yet, merges after the spec and plan are approved |
+| 36 | Branches | One short-lived branch per phase, named `type/short-description` (lowercase, hyphens, no ticket ID). One pull request per phase, merged into `main` with a merge commit (no squash) when CI is green. Phase 0, which has no CI yet, merges after the spec is approved. *(Phase 0 clause amended by #62.)* |
 | 37 | Module | `github.com/sultanrasulov/subscription-service` |
 | 38 | Language | Everything in the repository in English |
 | 39 | Dependency injection | Manual wiring in the entry point, no framework |
@@ -717,3 +721,4 @@ While this document is a draft, every decision is written in its final form wher
 | 59 | Integration test database | All integration tests share one database initialized with the `C` locale and UTF8 encoding; the index check disables sequential scans for its own transaction and also asserts that the row is found |
 | 60 | Graceful shutdown in Docker | The binary runs in exec form and receives SIGTERM; the app's stop grace period is 15 s; config validation requires the shutdown timeout to be at least the request timeout |
 | 61 | Commit messages | Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`), in English |
+| 62 | Planning | One implementation plan per phase, written when the phase starts; it is the first commit on the phase's branch and is approved before any code |
