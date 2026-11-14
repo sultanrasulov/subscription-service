@@ -376,9 +376,9 @@ Every error response is RFC 9457 `application/problem+json`, including responses
 | The request ran past its deadline | 503 | request timed out |
 | Anything else | 500 | internal server error; the real error is logged once, with the request ID |
 
-**Request deadline.** The server's write timeout closes the connection, but it does not cancel the handler's context. A hung database query would keep running after the client is gone. Middleware therefore gives every request a context with a deadline (`HTTP_REQUEST_TIMEOUT`). That context reaches pgx, so a hung query is cancelled, and the client receives a 503 problem+json instead of a dropped connection. 503 is also what the standard library's timeout handler uses. 504 is meant for gateways waiting on an upstream server.
+**Request deadline.** The server's write timeout closes the connection, but it does not cancel the handler's context. A hung database query would keep running after the client is gone. Middleware therefore gives every request a context with a deadline (`HTTP_REQUEST_TIMEOUT`). That context reaches pgx, so a hung query is canceled, and the client receives a 503 problem+json instead of a dropped connection. 503 is also what the standard library's timeout handler uses. 504 is meant for gateways waiting on an upstream server.
 
-**Client disconnects.** When the client goes away, the request context is cancelled. That is not a server failure, so it is logged at WARN level and is not counted as a 500.
+**Client disconnects.** When the client goes away, the request context is canceled. That is not a server failure, so it is logged at WARN level and is not counted as a 500.
 
 **One implementation of the format.** Two places write problem+json:
 - the HTTP server: router errors and panics;
@@ -415,7 +415,7 @@ The standard router answers unmatched routes and wrong methods in plain text. A 
 | `updated_at` | timestamptz | no | Set on insert; the update statement itself sets it to the current time (no trigger) |
 
 - A month is stored as a date on the 1st of that month, so values order and compare correctly. This fixes the earlier draft, which stored `MM-YYYY` strings.
-- Database constraints repeat the domain rules as a last line of defence.
+- Database constraints repeat the domain rules as a last line of defense.
 - `created_at` and `updated_at` exist for operations only. Neither the domain nor the API uses them.
 - **Indexes:** on `user_id`, and on the lower-cased `service_name` for case-insensitive matching.
 
@@ -522,7 +522,7 @@ The connection string is built so that passwords containing reserved URL charact
 - **Errors are logged exactly once:**
   - unexpected errors (500) at ERROR level, by the HTTP error writer, with the full error chain;
   - client errors (4xx) only through the request log line;
-  - requests whose context was cancelled because the client disconnected, at WARN level; they are not server errors;
+  - requests whose context was canceled because the client disconnected, at WARN level; they are not server errors;
   - requests that ran past their deadline (503), at WARN level, with the operation that was cut off;
   - panics by the recovery middleware, at ERROR level with the stack trace; the client receives a problem+json 500.
 - **Business events** at INFO level: subscription created, updated and deleted, with the subscription ID and user ID.
@@ -747,7 +747,7 @@ While this document is a draft, every decision is written in its final form wher
 | 55 | Server timeouts | All HTTP server timeouts configurable, with defaults |
 | 56 | Subscription period | The aggregate holds a `SubscriptionPeriod` value object (start, optional end, end not before start); held by value; separate from `CalculationPeriod` |
 | 57 | problem+json | One implementation in `internal/platform/problem`, used by both the HTTP server (router errors, panics) and the HTTP adapter (validation, not found, internal errors) |
-| 58 | Request deadline | Middleware gives every request context a deadline (`HTTP_REQUEST_TIMEOUT`, default 8s, shorter than the write timeout); a timeout (deadline exceeded) → 503 problem+json; a client disconnect (context cancelled) is logged at WARN with status 499, not as a 500 |
+| 58 | Request deadline | Middleware gives every request context a deadline (`HTTP_REQUEST_TIMEOUT`, default 8s, shorter than the write timeout); a timeout (deadline exceeded) → 503 problem+json; a client disconnect (context canceled) is logged at WARN with status 499, not as a 500 |
 | 59 | Integration test database | All integration tests share one database initialized with the `C` locale and UTF8 encoding; the index check disables sequential scans for its own transaction and also asserts that the row is found |
 | 60 | Graceful shutdown in Docker | The binary runs in exec form and receives SIGTERM; the app's stop grace period is 15 s; config validation requires the shutdown timeout to be at least the request timeout |
 | 61 | Commit messages | Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`), in English |
