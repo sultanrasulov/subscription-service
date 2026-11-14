@@ -96,7 +96,7 @@ Commit: `chore: scaffold module, tooling and linter`
   - gocyclo, which duplicates gocognit;
   - the govet shadow check, which is noisy on `err`.
 - `.golangci-lint-version` is the only place the linter version is written, as one line with the `v` prefix (`vX.Y.Z`). The Makefile reads it, and CI reads it in Task 11.
-- Make targets follow design §10.1. `lint` runs the version from the file without a global install.
+- Make targets follow design §10.1. `lint` installs the version from the file once into `bin/` under a versioned name (`bin/golangci-lint-vX.Y.Z`), without a global install. Later runs need no network, and a new version in the file is a new file name, so make installs it.
 - The entry point carries the swag general info: title, version, description and `@BasePath /api/v1`.
 - The generated Swagger directory is embedded (design §9).
 
@@ -107,6 +107,7 @@ Commit: `chore: scaffold module, tooling and linter`
 - [ ] A deliberate, uncommitted layer violation fails lint with the depguard message.
 - [ ] The generated spec is Swagger 2.0, with basePath `/api/v1` and no paths.
 - [ ] `git status` shows no generated files, no `bin/` and no `.env`.
+- [ ] A second `make lint` works without network (`GOPROXY=off`), and changing `.golangci-lint-version` installs the new version.
 
 **Known pitfalls (verified):**
 - `go mod init` writes the local patch version, so set the `go` line explicitly.
@@ -115,7 +116,9 @@ Commit: `chore: scaffold module, tooling and linter`
 - godot does not flag swag annotations written as gofmt code blocks (`//<tab>@…`), so it needs no exclusion.
 - `go:embed` needs the `all:` prefix to accept a directory that holds only a dotfile placeholder.
 - swag fails on a directory that does not exist yet, so the parse list starts with the entry point only. Phase 3 adds the HTTP adapter.
-- `go run …@VERSION` needs the `v` prefix. golangci-lint-action accepts the file with or without it.
+- `go install …@VERSION` needs the `v` prefix. golangci-lint-action accepts the file with or without it.
+- `go run …@VERSION` contacts the module proxy on every run (a deprecation check), even with the module cached. When the proxy was unreachable, lint failed, and `GOPROXY=off` did not help. Installing once into `bin/` removes the network from every later run.
+- golangci-lint's docs recommend a binary install over `go install`. Locally `go install …@VERSION` is used anyway: it builds with the project's toolchain (design §10.4 needs Go ≥ the `go` directive), checks sources against the checksum database and needs only Go. CI uses the action's binary, as the docs recommend.
 
 ### Task 2: Configuration and `.env.example`
 Commit: `feat(config): load and validate configuration from environment`
