@@ -343,13 +343,20 @@ Commit: `feat(httpserver): add health, readiness, swagger and router error route
 - [ ] a wrong method → 405 problem with `Allow`;
 - [ ] a handler's own 404 is left alone;
 - [ ] the spec present and missing;
-- [ ] the redirect chain `/swagger` → `/swagger/` → `index.html`;
-- [ ] the middleware is applied.
+- [ ] the redirect chain `/swagger` → `/swagger/` → `index.html`, and a redirect to a canonical path reaching the client unchanged, both when the canonical path matches and when it does not (`GET /nope/../nope2` ends in 404, `POST /x/../health` in 405);
+- [ ] path values (`{id}`) reaching routes added through `Register`;
+- [ ] the UI page loading `/swagger/doc.json` itself, with its assets served from the binary;
+- [ ] the middleware is applied, through the one chain function from Task 6.
 
 **Known pitfalls (verified):**
 - The standard router reports an empty pattern for both 404 and 405, and sets `Allow` on 405.
-- The `/swagger` redirect reports a non-empty pattern.
+- For a redirect to a canonical path that matches (`/swagger` → `/swagger/`, `/x/../health`), the router reports the pattern the redirect leads to. For a non-canonical path that matches nothing it reports an empty pattern and still answers with a redirect. The rewrite passes such a redirect through, so the canonical path decides: answering 404 at once would turn `POST /x/../health`, which ends in 405, into a 404 (verified).
+- Only `ServeMux.ServeHTTP` sets the request's path values; the handler `mux.Handler` returns, called directly, sees an empty `{id}` (verified). The rewrite therefore calls `mux.ServeHTTP`, even though it means matching twice.
+- The redirect status is the standard library's choice (307 in Go 1.27). Tests check for a redirect and its `Location`, not a fixed code.
 - The Swagger UI library cannot serve our spec itself, because it expects generated Go code we do not have. `doc.json` has its own route, which wins as the more specific pattern.
+- The UI assets module ships a static `swagger-initializer.js` that points at the petstore demo. The page http-swagger renders configures the spec URL inline and does not load that file; a test pins both, so an update of the library cannot silently switch the UI to the demo.
+- http-swagger requires an older UI assets module than the latest; the module is pinned in go.mod at its latest version (indirect, since only http-swagger imports it).
+- http-swagger imports swaggo/swag, the generator, so the binary carries go/parser and x/tools (+4.7 MB measured on a minimal program). Accepted: the alternative is our own UI page code, and `http.FileServer` would redirect `/swagger/index.html`, the URL the design promises.
 
 ### Task 8: Server with graceful shutdown
 Commit: `feat(httpserver): add server with graceful shutdown`
