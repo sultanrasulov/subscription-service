@@ -369,13 +369,19 @@ Commit: `feat(httpserver): add server with graceful shutdown`
 - All four server timeouts come from the config, and the server's own error log goes through slog.
 - Shutdown starts when the context is canceled and is bounded by the shutdown timeout. If it overruns, the server is closed and an error is returned. A normal close is not an error.
 - The listener is passed in, so tests can use a random port.
+- Request contexts do not derive from the service's context: a shutdown lets in-flight requests finish instead of canceling them, and each request is bounded by its own deadline (Task 6). `HTTP_SHUTDOWN_TIMEOUT ≥ HTTP_REQUEST_TIMEOUT` (Task 2) is what lets them finish.
 
 **Provides:** a server constructor; a serve function that takes a context, a listener and the shutdown timeout.
 
 **Done when:** tests cover
-- [ ] the timeouts are applied;
-- [ ] after cancellation an in-flight request completes, serve returns cleanly, and new connections are refused;
-- [ ] an overrunning shutdown returns an error.
+- [ ] the timeouts are applied, and net/http's own messages reach the logger at WARN;
+- [ ] after cancellation an in-flight request completes with its context still alive, serve returns cleanly, and new connections are refused;
+- [ ] an overrunning shutdown returns an error wrapping the deadline, and closes the stuck request's connection;
+- [ ] serve returns an error when serving itself fails.
+
+**Known pitfalls (verified):**
+- Each protection needs a test that fails without it. Mutations confirmed it: closing instead of shutting down cut the in-flight request; skipping the close after an overrun left the stuck connection open; deriving request contexts from the service's context canceled the in-flight request's context.
+- A mutation that breaks compilation shows no `--- FAIL` line. Check that the mutated code builds before reading a quiet test run as "not caught".
 
 ### Task 9: Composition root and local run
 Commit: `feat: wire the service in main and run it locally`
@@ -389,6 +395,7 @@ Commit: `feat: wire the service in main and run it locally`
 - On config errors, every problem is printed and the process exits non-zero.
 - Signals: SIGINT and SIGTERM.
 - The log shows `server started`, `shutting down` and `server stopped`. The pool closes last.
+- `shutting down` marks the moment the signal arrives, so it is logged from `context.AfterFunc(ctx, …)`, not after the serve function returns: that function returns only once the in-flight requests have finished, which would put the line next to `server stopped`.
 - `compose.dev.yaml` publishes the database on loopback at `POSTGRES_PORT`, defaulting to 5432 inside the file. Only `make db` uses it (design §10.3).
 - `make run` loads `.env.example`, then an optional `.env` (design §7).
 
