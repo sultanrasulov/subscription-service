@@ -248,20 +248,23 @@ Commit: `feat(postgres): add schema migration, pool and migration runner`
   - takes the image from the single line `image: postgres:…` by a line search. No YAML library, so no new dependency; the project owns the file's shape;
   - fails with an error naming `compose.yaml` if the file or the line is missing;
   - starts one container per test package with `C` locale and UTF8 encoding (design §5.2);
+  - each integration test creates its own database in that container (`CREATE DATABASE … TEMPLATE template0`) and drops it at the end, so tests are independent and run in parallel;
   - is skipped under `-short`;
   - is reused in phases 3 and 4.
 
 **Provides:** embedded migrations; pool creation from the Postgres config; the migration runner; `pgtest`, which returns a Postgres config and a stop function that reports errors.
 
 **Done when:** tests cover
-- [ ] connect and ping, and the configured connect timeout;
+- [ ] connect and ping, and the pool configuration (max connections, connect timeout) checked without a network;
 - [ ] a server that accepts the TCP connection and never answers fails within the timeout instead of hanging (a local listener, no Postgres);
+- [ ] a server that completes the handshake and then never answers a query fails within the timeout (a fake backend on `pgproto3`, no Postgres): only the ping's own deadline covers this case;
 - [ ] a wrong password and a closed port fail without leaking the password;
 - [ ] an empty database migrates to version 1, a second run reports no change, and down → up works;
 - [ ] the pool closes after migrating;
 - [ ] collation and indexes are in place;
 - [ ] every CHECK rejects its invalid row with SQLSTATE 23514 and its own name, and a boundary row is accepted (100 Cyrillic characters, price 0, 2000-01 and 2100-12);
 - [ ] a non-UTF8 database fails the migration;
+- [ ] a failed migration leaves the version dirty, and the next run refuses with an error pointing to `migrate force`;
 - [ ] `pgtest` reads the image from `compose.yaml` (a unit test that also runs under `-short`).
 
 **Known pitfalls (verified):**
@@ -270,6 +273,11 @@ Commit: `feat(postgres): add schema migration, pool and migration runner`
 - A closed port fails at once with or without a timeout. Assert the timeout on the pool config, or with a listener that accepts and stays silent, never through an outside network.
 - pgx without a connect timeout waits for the operating system's TCP timeout, which takes minutes.
 - `connect_timeout` in a connection string takes whole seconds. Setting the duration on the config avoids that limit.
+- The silent-server test passes with either protection, connect timeout or ping deadline, because the handshake itself stalls. Only a server that finishes the handshake and stalls on the query tests the ping deadline. Without the deadline, that test hangs until the test timeout (verified).
+- After a canceled query, pgx closes the connection in the background: it sends a cancel request on a new connection and Terminate on the old one, then waits for the server to close each, for up to 15 seconds, and `pool.Close()` waits for that. A fake server must therefore close every connection when it is done with it, including one whose message it cannot read. pgx v5.13 sends a cancel request that `pgproto3.Backend` rejects as "cancel request too short". A real Postgres closes them at once.
+- On first start the image runs a temporary server on the Unix socket only (`listen_addresses=''` in its entrypoint). `pg_isready` over the socket reports it ready just before it shuts down, so a dependent service could start against a database that is not yet on TCP. The healthcheck uses TCP (`-h 127.0.0.1`); five fresh-volume starts each accepted a TCP connection as soon as the service was healthy (verified).
+- testcontainers' `Run` returns the container together with an error, for example when the wait strategy fails. Terminate it on that path too, because Ryuk may be disabled in CI. `TerminateContainer` accepts a nil container.
+- `errcheck` with `check-type-assertions` flags `ln.Addr().(*net.TCPAddr)`; check the `ok`. gosec flags `os.ReadFile` on a built path; read the fixed name through `os.DirFS(root)` instead.
 - A `SQL_ASCII` database can be created in the same container (`TEMPLATE template0`, `LOCALE 'C'`). The migration then fails, because `pg_c_utf8` does not exist for that encoding.
 
 ### Task 6: HTTP middleware
