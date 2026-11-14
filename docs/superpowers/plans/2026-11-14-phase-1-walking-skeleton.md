@@ -80,14 +80,21 @@ Commit: `chore: scaffold module, tooling and linter`
 **Rules:**
 - Module path `github.com/sultanrasulov/subscription-service`. `go.mod` holds the minimum version in `go` and the pinned patch in `toolchain`.
 - `.gitignore` covers `bin/`, `.env` and the generated Swagger files, keeping the `.gitkeep` placeholder.
-- Linters:
-  - the standard set;
-  - depguard, with one rule per row of design §3.2, including layers that do not exist yet;
-  - gosec, errorlint, noctx, bodyclose, misspell, unconvert;
-  - nolintlint: a reason is required;
-  - sloglint: `*Context` methods only.
+- Linters, a strict baseline enabled while the code base is empty and they cost nothing:
+  - the standard set, with `errcheck` also checking type assertions;
+  - **correctness and safety:** bodyclose, errorlint, exhaustive (a `default` counts as exhaustive), gosec, nilerr, noctx, unparam;
+  - **architecture and conventions:**
+    - depguard with one rule per row of design §3.2, including layers that do not exist yet. The domain rule is an allow-list (standard library and the UUID library only, `list-mode: strict`), and its deny entries keep the §3.2 explanations for the standard packages it forbids;
+    - nolintlint: name the linter and give a reason;
+    - sloglint: `*Context` methods only;
+  - **readability:** gocognit, goconst (not in tests), gocritic, godot, misspell (US), nakedret, revive, unconvert, whitespace.
 
-  Formatters: gofmt and goimports.
+  Tests are excluded from gosec, noctx, gocognit and unparam. Issue limits are off, and findings on one line are not merged, so no finding is hidden. Formatters: gofmt and goimports.
+- Not enabled, on purpose:
+  - lll, because Go style has no fixed line length;
+  - dupl and prealloc, which are mostly noise at this size;
+  - gocyclo, which duplicates gocognit;
+  - the govet shadow check, which is noisy on `err`.
 - `.golangci-lint-version` is the only place the linter version is written, as one line with the `v` prefix (`vX.Y.Z`). The Makefile reads it, and CI reads it in Task 11.
 - Make targets follow design §10.1. `lint` runs the version from the file without a global install.
 - The entry point carries the swag general info: title, version, description and `@BasePath /api/v1`.
@@ -103,6 +110,9 @@ Commit: `chore: scaffold module, tooling and linter`
 
 **Known pitfalls (verified):**
 - `go mod init` writes the local patch version, so set the `go` line explicitly.
+- `go get -tool` leaves `go.sum` without the checksums of the tool's test dependencies. Run `go mod tidy`; `go mod tidy -diff` must be clean.
+- A deny-only depguard rule lets any third-party package through. The domain rule must be an allow-list to match design §3.2.
+- godot does not flag swag annotations written as gofmt code blocks (`//<tab>@…`), so it needs no exclusion.
 - `go:embed` needs the `all:` prefix to accept a directory that holds only a dotfile placeholder.
 - swag fails on a directory that does not exist yet, so the parse list starts with the entry point only. Phase 3 adds the HTTP adapter.
 - `go run …@VERSION` needs the `v` prefix. golangci-lint-action accepts the file with or without it.
@@ -359,7 +369,7 @@ Commit: `chore: add CI workflow and Dependabot`
 **Rules:**
 - CI runs on push and on pull requests to `main`, with read-only permissions. Jobs:
   - `lint`: the official golangci-lint action, reading `.golangci-lint-version`;
-  - `test`: `make test`, with the Go version taken from `go.mod`;
+  - `test`: `go mod tidy -diff` must be clean, then `make test`, with the Go version taken from `go.mod`;
   - `smoke`: compose up, then health, readiness, Swagger 2.0 and the UI; logs on failure; always tear down.
 - Every action, `actions/*` included, is pinned to a full commit SHA, with its version in a comment (design §10.4).
 - Dependabot follows design §10.5:
