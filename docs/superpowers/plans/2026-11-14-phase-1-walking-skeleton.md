@@ -288,7 +288,7 @@ Commit: `feat(httpserver): add request ID, access log, recover and deadline midd
 **Scope:** `internal/platform/httpserver`.
 
 **Rules:**
-- The order is request ID → access log → recover → deadline → router. The access log sits outside the deadline, so a cancelled context there always means the client went away.
+- The order is request ID → access log → recover → deadline → router, fixed in one function that Task 7 calls. The request ID is outermost, so every line of the request carries it; the access log sits outside the recovery, so it logs the 500 the recovery writes; the deadline is innermost, so it bounds only the handler's work. A client that goes away cancels the context (`context.Canceled`), while an expired deadline gives `context.DeadlineExceeded`, so the access log tells them apart in any order.
 - An incoming request ID is kept only if it has 1–64 visible ASCII characters; otherwise a UUID v7 is generated. The ID goes into the response header and the context.
 - One `request completed` line per request, with method, path, status, duration and request ID. A client disconnect is logged as status 499 at WARN.
 - A panic is logged at ERROR with its stack, and becomes a 500 problem+json only if no header was sent yet. `http.ErrAbortHandler` is re-panicked.
@@ -297,12 +297,25 @@ Commit: `feat(httpserver): add request ID, access log, recover and deadline midd
 **Provides:** the middleware chain that Task 7 uses.
 
 **Done when:** tests cover
-- [ ] a valid ID is kept, and each invalid kind is replaced;
+- [ ] a valid ID is kept, up to 64 bytes, and each invalid kind is replaced by a UUID v7;
 - [ ] the default status is 200;
-- [ ] a disconnect is logged as 499;
+- [ ] a disconnect is logged as 499, both with a canceled context and on a real server whose client closes the connection;
 - [ ] a panic before and after headers were sent;
 - [ ] the abort panic is re-panicked;
-- [ ] the deadline is set.
+- [ ] the deadline is set;
+- [ ] `http.ResponseController` still reaches `Flush` through the wrapped writer (`Unwrap`);
+- [ ] a flush before a panic keeps the response as sent and logs its status;
+- [ ] a request aborted with `http.ErrAbortHandler` is logged once;
+- [ ] the chain applies the order above: one request shows the ID, the deadline, the 500 problem and the same request ID on the panic line and the access line.
+
+**Known pitfalls (verified):**
+- The access log and the panic recovery each wrap the writer with their own recorder. Neither depends on the other's type, and the access log still sees the 500 that the recovery writes.
+- net/http cancels the request context when the client closes the connection, and the access log runs before the handler chain returns, so the cancellation it sees comes from the client. A real-server test confirms it.
+- misspell runs with the US locale: write "canceled", not "cancelled".
+- A flush through `http.ResponseController` bypasses `WriteHeader`, because the controller unwraps the writer. The recorder implements `FlushError`, which the controller looks for first, and counts the flush as the header. Without it, a panic after a flush sent 200 with a 500 body and "superfluous WriteHeader" (verified on a real server).
+- Code after `next.ServeHTTP` does not run when a panic passes through, and the recovery re-panics `http.ErrAbortHandler`. The access log therefore writes its line in a defer.
+- `uuid.NewString` is `Must(NewRandom())`, and `NewV7` starts with `NewRandom`, so a uuid fallback would panic on the same failure. The fallback is the clock.
+- The order of the deadline and the access log does not affect telling 499 from an expired deadline: `context.Canceled` and `context.DeadlineExceeded` differ in any order (a mutation that swapped them passed every test).
 
 ### Task 7: Health, readiness, Swagger and router-error routes
 Commit: `feat(httpserver): add health, readiness, swagger and router error routes`
@@ -347,7 +360,7 @@ Commit: `feat(httpserver): add server with graceful shutdown`
 
 **Rules:**
 - All four server timeouts come from the config, and the server's own error log goes through slog.
-- Shutdown starts when the context is cancelled and is bounded by the shutdown timeout. If it overruns, the server is closed and an error is returned. A normal close is not an error.
+- Shutdown starts when the context is canceled and is bounded by the shutdown timeout. If it overruns, the server is closed and an error is returned. A normal close is not an error.
 - The listener is passed in, so tests can use a random port.
 
 **Provides:** a server constructor; a serve function that takes a context, a listener and the shutdown timeout.
