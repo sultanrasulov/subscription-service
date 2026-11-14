@@ -183,7 +183,7 @@ subscription-service/
 │   │       └── postgres/          # driven: implements the Repository and TotalCostReader ports
 │   └── platform/                  # technical infrastructure; knows nothing about subscriptions
 │       ├── config/                # environment → typed, validated configuration
-│       ├── logger/                # structured JSON logging with request IDs
+│       ├── logger/                # structured logging (JSON or text) with request IDs
 │       ├── postgres/              # connection pool and migration runner
 │       ├── problem/               # RFC 9457 problem+json: the one implementation of the error format
 │       └── httpserver/            # server, middleware, /health, /ready, Swagger, graceful shutdown
@@ -502,11 +502,13 @@ One application service, with one method per use case. It depends on the two dom
 | `HTTP_REQUEST_TIMEOUT` | `8s` | Deadline for each request's context (§4.4). Must be shorter than the write timeout, so the client receives a problem+json response instead of a dropped connection |
 | `HTTP_SHUTDOWN_TIMEOUT` | `10s` | How long graceful shutdown waits for in-flight requests. Must be at least the request timeout, so shutdown never cuts off a request that is still within its deadline. Docker's stop grace period must be longer (§10.3) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `LOG_FORMAT` | `json` | `json` or `text`, matched exactly. JSON is for machines (containers, log collectors), so compose needs no setting; text is for reading logs locally and goes in a developer's `.env` |
 | `POSTGRES_HOST` | required | `localhost` in `.env.example`; compose overrides it with the database service name |
 | `POSTGRES_PORT` | `5432` | Also the host port that the development overlay publishes (§10.3) |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | required | The same names the Postgres image reads, so one env file configures both containers without duplicated values |
 | `POSTGRES_SSLMODE` | `disable` | |
 | `POSTGRES_MAX_CONNS` | `10` | |
+| `POSTGRES_CONNECT_TIMEOUT` | `5s` | Bounds opening every new connection and the ping at startup. Without it pgx waits for the operating system's TCP timeout, minutes long. Passed to pgx as a duration, so sub-second values work. The other pool settings (minimum connections, connection lifetime and idle time) keep pgx's defaults (§13) |
 
 Compose interpolation (`${VAR}` in a compose file) reads only the shell and `.env`, not `env_file`. Sharing the image's variable names is what lets a clean clone start without copying `.env.example` to `.env`. The app's other `POSTGRES_*` names are not variables the image interprets.
 
@@ -514,7 +516,7 @@ The connection string is built so that passwords containing reserved URL charact
 
 ## 8. Logging
 
-- **Format:** structured JSON (`log/slog`) to stdout. The level comes from `LOG_LEVEL`.
+- **Format:** structured `log/slog` records to stdout, JSON by default or text with `LOG_FORMAT=text` for local reading (§7). The level comes from `LOG_LEVEL`. Both formats carry the same fields, including the request ID.
 - **Request ID:** an incoming `X-Request-ID` is reused if it is at most 64 printable characters; otherwise a new one is generated. The ID is returned in the response header and attached to every log record written while handling the request.
 - **Request log:** one `request completed` line per request, with method, path, status, duration and request ID. A request abandoned by the client is recorded with status **499**, nginx's "client closed request" convention. Nothing is sent to the client, so the log would otherwise show a misleading 200 or 0.
 - **Errors are logged exactly once:**
@@ -679,6 +681,7 @@ Branch names follow `type/short-description`:
 | Dozens of providers or several bounded contexts | Reconsider generated dependency injection (goforj/wire) |
 | `encoding/json/v2` becomes a stable part of Go | Switch request decoding to it. It rejects duplicate keys and encodes nil slices as `[]` by itself. In Go 1.27 it is still a default-on experiment, so the stable v1 package is used |
 | Deployment to Kubernetes | Point the liveness probe at `/health` and the readiness probe at `/ready` |
+| The database sits behind PgBouncer, a load balancer or failover | Make the connection lifetime, idle time and minimum connections configurable, so connections are recycled toward the current server; until then pgx's defaults apply (1 h, 30 min, 0) |
 | Dependabot starts bumping `toolchain` (dependabot-core #13520) | It would then bump `toolchain` in a `gomod` pull request and the `golang` image in a `docker` pull request, and each would fail the toolchain check (§10.2) on its own. Combine both updates in one pull request, by hand or with a Dependabot multi-ecosystem group |
 
 ## Appendix A. Decision log
@@ -717,7 +720,7 @@ While this document is a draft, every decision is written in its final form wher
 | 28 | Env files | `.env.example` committed; compose and `make run` read `.env.example`, then an optional `.env` |
 | 29 | Router | Standard library router |
 | 30 | Swagger | Code-first swaggo, specification only (no generated Go code), not committed, embedded, Swagger 2.0, always on |
-| 31 | Logging | slog JSON, request middleware, each error logged once |
+| 31 | Logging | slog JSON, request middleware, each error logged once. *(Format made selectable by #65.)* |
 | 32 | Versions | Minimums only: Go 1.27, PostgreSQL 17 (`pg_c_utf8`). Exact versions live only in `go.mod`, `Dockerfile` and `compose.yaml`. Alpine build image with `make`, Alpine runtime. *(List of version files amended by #63.)* |
 | 33 | Tests | Domain unit tests, HTTP tests, testcontainers |
 | 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) |
@@ -751,3 +754,5 @@ While this document is a draft, every decision is written in its final form wher
 | 62 | Planning | One implementation plan per phase, written when the phase starts; it is the first commit on the phase's branch and is approved before any code |
 | 63 | Dependency updates | Dependabot, weekly, minor and patch grouped, `chore(deps)` commits; each exact version in one file (`go.mod`, `Dockerfile`, `compose.yaml`, `.golangci-lint-version`, `ci.yml`); actions pinned by commit SHA; the builder checks that its Go version equals `toolchain`; Postgres majors excluded (§10.2, §10.4, §10.5) |
 | 64 | Compose database overrides | The `app` service overrides both `POSTGRES_HOST` and `POSTGRES_PORT` to the in-network values, because `POSTGRES_PORT` also sets the host port for `make db` (§10.3) |
+| 65 | Log format | `LOG_FORMAT`: `json` (default) or `text`, matched exactly; JSON for compose and log collectors, text for local reading (§7, §8) |
+| 66 | Database connect timeout | `POSTGRES_CONNECT_TIMEOUT`, default 5 s, passed to pgx as a duration; bounds every new connection and the startup ping. Other pool settings keep pgx defaults until a §13 trigger |

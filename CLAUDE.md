@@ -8,7 +8,7 @@ Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), D
 - HTTP: the standard library `net/http` `ServeMux`, not chi, gin or echo.
 - Database: pgx v5 with hand-written SQL. No ORM, query builder or sqlc.
 - Migrations: golang-migrate, embedded with `go:embed` and applied at startup.
-- Logging: `log/slog` with a JSON handler, not zap or zerolog.
+- Logging: `log/slog`, not zap or zerolog. JSON handler by default; `LOG_FORMAT=text` for reading logs locally.
 - Config: `caarlos0/env`, from environment variables only. No viper, and no reading of `.env` in Go.
 - JSON: `encoding/json` (v1), not `encoding/json/v2` until v2 is a stable part of Go (design §13).
 - IDs: `github.com/google/uuid`, version 7.

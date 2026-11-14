@@ -120,46 +120,66 @@ Commit: `chore: scaffold module, tooling and linter`
 ### Task 2: Configuration and `.env.example`
 Commit: `feat(config): load and validate configuration from environment`
 
-**Goal:** a typed, validated configuration that reports every problem at once.
+**Goal:** a typed, validated configuration that reports every problem at once and never prints a secret.
 
 **Scope:** `internal/platform/config`, `.env.example`.
 
 **Rules:**
-- Variables and defaults are exactly design §7, and `.env.example` lists all of them.
+- **One file per section**, each next to its test file:
+  - `config.go`: `Config`, `Load` and the error renaming;
+  - `http.go`, `log.go`, `postgres.go`: each section's type, its validation and its derived values;
+  - `secret.go`: the `Secret` type.
+
+  A new section is a new pair of files.
+- Variables and defaults are exactly design §7, and `.env.example` lists all of them. Tags carry the full variable names, so a search for a name finds its field.
 - The environment is passed in as a map, so tests need no process environment and can run in parallel.
-- Parse errors and missing variables are reported together. Then meaning is validated, with every problem joined and each message starting with the variable's name:
+- Parse errors and missing or empty variables are reported together. Then each section validates its own values, and all problems are joined. Each message starts with the variable's name and shows the value received (secrets excepted):
   - ports in 1–65535;
   - durations and the pool size above zero;
   - `POSTGRES_SSLMODE` is a libpq mode;
   - request timeout shorter than write timeout;
   - shutdown timeout not shorter than request timeout.
+- Non-obvious fields carry a short "why" comment pointing at the design.
+- `LOG_FORMAT` is its own type with exactly two values, `json` (default) and `text` (decision #65). Like the level, it is checked while parsing, so an unknown value is a parse error.
+- `POSTGRES_CONNECT_TIMEOUT` (default 5 s, decision #66) is a duration above zero. Other pool settings are not configurable: they keep pgx's defaults (design §13).
+- `POSTGRES_PASSWORD` is a `Secret`. fmt (`%v`, `%+v`, `%#v`, `%s`, `%q`), slog and encoding/json show `[REDACTED]`, even when a whole config struct is printed; go vet rejects the other verbs for this type. `Secret` deliberately does not implement `fmt.Formatter`, which would only silence vet while `%p` still bypasses it. Only `Reveal` returns the value, and only the connection string calls it (CLAUDE.md, "Never log secrets").
 - The connection string escapes the user and the password.
 - `.env.example` has no quotes or spaces, so compose and the shell read it the same way. Its header says it holds local defaults only.
 
-**Provides:** the config with HTTP, logging and Postgres sections, and a Postgres connection string.
+**Provides:** the config with HTTP, logging and Postgres sections; a Postgres connection string; the `Secret` type.
 
 **Done when:** tests cover
-- [ ] the defaults;
-- [ ] every problem reported at once, each named by its variable;
-- [ ] each invalid value;
-- [ ] the password never appearing in an error;
-- [ ] a password with reserved characters surviving a round trip through the connection string and pgx's parser.
+- [ ] the defaults and explicit values of each section;
+- [ ] every parse problem, and every validation problem, reported at once, each named by its variable;
+- [ ] each invalid value, with the received value in the message, including an unknown or wrongly cased log format;
+- [ ] an empty value for a variable with a default means the default;
+- [ ] the password never appearing in an error, in fmt output, in slog output or in JSON;
+- [ ] `Load(nil)` treating the environment as empty instead of reading the process environment;
+- [ ] field names unique across all sections, so a parse error always names the right variable;
+- [ ] a user and a password with reserved characters surviving a round trip through the connection string and pgx's parser.
 
-**Known pitfall (verified):** the env library's parse error names the Go struct field, not the variable. Rewrite those messages to name the variable.
+**Known pitfalls (verified):**
+- The env library's parse error names the Go struct field, not the variable. Rewrite those messages to name the variable.
+- `required` alone accepts an empty value such as `POSTGRES_HOST=`. Required strings also need `notEmpty`.
+- The env library tries `encoding.TextUnmarshaler` before custom parsers, so `slog.Level` parses through its own `UnmarshalText`, and an unknown level is already a parse error. `LogFormat` uses the same mechanism.
+- For a variable with a default, the env library treats an empty value as unset and uses the default. This holds for every such variable.
+- Given a nil map, the env library reads the process environment. `Load` turns nil into an empty map.
+- go vet checks the verbs of a helper only when its format and args reach `fmt.Sprintf` unchanged. `problem` is written that way, so vet checks every call.
 
 ### Task 3: Logger with request IDs
-Commit: `feat(logger): add JSON logger with request ID`
+Commit: `feat(logger): add structured logger with request ID`
 
-**Goal:** structured JSON logs that carry the request ID automatically (design §8).
+**Goal:** structured logs that carry the request ID automatically, as JSON or text (design §8, decision #65).
 
 **Scope:** `internal/platform/logger`.
 
-**Rules:** `log/slog` with a JSON handler. The request ID comes from the context and is a top-level field, even after `With` and `WithGroup`.
+**Rules:** `log/slog`, with the JSON or the text handler chosen by the configured format. The request ID comes from the context and is a top-level field in both formats, even after `With` and `WithGroup`.
 
-**Provides:** a logger constructor taking a writer and a level; a way to store a request ID in a context and read it back.
+**Provides:** a logger constructor taking a writer, a level and a format; a way to store a request ID in a context and read it back.
 
 **Done when:** tests cover
-- [ ] the field is present when the context has an ID, and absent when it does not;
+- [ ] each format writes its own output (JSON, or `key=value` text);
+- [ ] the field is present when the context has an ID, and absent when it does not, in both formats;
 - [ ] the field stays top-level after `With` and `WithGroup`;
 - [ ] the level filters records.
 
@@ -196,7 +216,9 @@ Commit: `feat(postgres): add schema migration, pool and migration runner`
   - named CHECK constraints for every rule in §5.1;
   - the two indexes;
   - `BEGIN … COMMIT`, and the files embedded in the binary.
-- The pool uses a connect timeout and pings on creation. The connection string never appears in an error.
+- The pool takes its connect timeout from `POSTGRES_CONNECT_TIMEOUT` and sets it as a duration on the connection config, so every new connection is bounded, including those the pool opens later.
+- The pool pings on creation under its own deadline (the same timeout). The connect timeout bounds opening a connection, not a query on one, and the context from `main` has no deadline.
+- On a failed ping the pool is closed. The connection string never appears in an error.
 - Migrations run on the same pool, not on a second connection string:
   - "no change" is success;
   - a dirty version is an error that points to manual `migrate force`;
@@ -214,6 +236,7 @@ Commit: `feat(postgres): add schema migration, pool and migration runner`
 
 **Done when:** tests cover
 - [ ] connect and ping, and the configured connect timeout;
+- [ ] a server that accepts the TCP connection and never answers fails within the timeout instead of hanging (a local listener, no Postgres);
 - [ ] a wrong password and a closed port fail without leaking the password;
 - [ ] an empty database migrates to version 1, a second run reports no change, and down → up works;
 - [ ] the pool closes after migrating;
@@ -225,7 +248,9 @@ Commit: `feat(postgres): add schema migration, pool and migration runner`
 **Known pitfalls (verified):**
 - The migration driver keeps one dedicated pool connection while the migrator lives. Close the migrator on every path, or `pool.Close()` blocks forever. If building the migrator fails, close the `*sql.DB` built from the pool. Closing it twice is safe, and it does not close the pool.
 - testcontainers' ready-made connection string does not escape the password. Build the config from host and port instead.
-- A closed port fails at once with or without a timeout. Assert the timeout on the pool config, not through the network.
+- A closed port fails at once with or without a timeout. Assert the timeout on the pool config, or with a listener that accepts and stays silent, never through an outside network.
+- pgx without a connect timeout waits for the operating system's TCP timeout, which takes minutes.
+- `connect_timeout` in a connection string takes whole seconds. Setting the duration on the config avoids that limit.
 - A `SQL_ASCII` database can be created in the same container (`TEMPLATE template0`, `LOCALE 'C'`). The migration then fails, because `pg_c_utf8` does not exist for that encoding.
 
 ### Task 6: HTTP middleware
