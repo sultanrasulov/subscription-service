@@ -207,13 +207,19 @@ Commit: `feat(problem): add RFC 9457 problem details writer`
 - Content type `application/problem+json`, type `about:blank`, and the title taken from the status code.
 - Optional field errors keep their order. An empty list is omitted.
 - The type name does not repeat the package name.
+- Like `http.Error`, it deletes a stale `Content-Length` and sets `X-Content-Type-Options: nosniff`. It keeps the other headers set before the call, such as `Allow`, and leaves `Content-Encoding` alone.
 
 **Provides:** a problem-details type with field errors, which phase 3 documents in Swagger; a writer that takes a status, a detail and field errors.
 
 **Done when:** tests cover
 - [ ] the body and the header;
-- [ ] the omitted empty list;
-- [ ] the order of field errors.
+- [ ] the omitted empty list, and an omitted empty detail;
+- [ ] the order of field errors;
+- [ ] headers set before the call, such as `Allow`, are kept;
+- [ ] a stale `Content-Length` is removed and `nosniff` is set, and on a real server the client reads the whole body;
+- [ ] the members appear in RFC 9457 order (type, title, status, detail, errors).
+
+**Known pitfall (verified):** a `Content-Length` set before the call cuts the body off. On a real server the client gets the status, an empty body and `unexpected EOF`. `http.Error` deletes it for the same reason (`net/http/server.go`).
 
 ### Task 5: Schema migration, pool and migration runner
 Commit: `feat(postgres): add schema migration, pool and migration runner`
