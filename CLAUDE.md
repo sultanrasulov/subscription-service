@@ -4,7 +4,7 @@
 A REST service that stores users' online subscriptions and reports their total cost over a period (Effective Mobile Golang Developer test assignment).
 The approved design is `docs/design.md`. Read the relevant section before changing behavior. It is referenced, not imported, because of its size.
 Approach: Domain-Driven Design, kept small. See "Domain modeling".
-Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), Docker Compose. Exact versions live only in `go.mod`, the `Dockerfile` and `compose.yaml`. Don't repeat them here.
+Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), Docker Compose. Each exact version lives in one file only: `go.mod`, the `Dockerfile`, `compose.yaml`, `.golangci-lint-version` or `.github/workflows/ci.yml`. Never repeat a version anywhere else, including here and in plans (design §10.5).
 - HTTP: the standard library `net/http` `ServeMux`, not chi, gin or echo.
 - Database: pgx v5 with hand-written SQL. No ORM, query builder or sqlc.
 - Migrations: golang-migrate, embedded with `go:embed` and applied at startup.
@@ -108,3 +108,4 @@ Dependencies flow `httpapi → application → domain ← postgres`. Adapters ma
 - Never create `compose.override.yaml`. Compose merges it automatically and would change a reviewer's `docker compose up`. Local development uses `compose.dev.yaml` through `make db` (design §10.3).
 - A failed migration leaves its version marked dirty. Editing the applied file does not help. Recovery is a manual `migrate force` (design §5.3).
 - Encoding a nil slice produces `null`, so list responses must return an initialized slice (design §4.2).
+- A Go update changes `toolchain` in `go.mod` and the `golang` image in the `Dockerfile` together; the builder fails otherwise. A Dependabot PR for the image stays red until `toolchain` is bumped in the same PR (design §10.2).
