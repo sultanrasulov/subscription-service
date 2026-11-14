@@ -176,15 +176,25 @@ Commit: `feat(logger): add structured logger with request ID`
 
 **Scope:** `internal/platform/logger`.
 
-**Rules:** `log/slog`, with the JSON or the text handler chosen by the configured format. The request ID comes from the context and is a top-level field in both formats, even after `With` and `WithGroup`.
+**Rules:**
+- `log/slog`, with the JSON or the text handler chosen by the configured format. Any format other than text is written as JSON, the default.
+- The constructor takes the logging section of the configuration (`config.Log`: level and format), so `main` passes it as one value.
+- The request ID comes from the context. It is a top-level `request_id` field in both formats, even after `With` and `WithGroup`. An empty ID is treated as no ID.
 
-**Provides:** a logger constructor taking a writer, a level and a format; a way to store a request ID in a context and read it back.
+**Provides:** a logger constructor taking a writer and the logging configuration; a way to store a request ID in a context and read it back.
 
 **Done when:** tests cover
 - [ ] each format writes its own output (JSON, or `key=value` text);
-- [ ] the field is present when the context has an ID, and absent when it does not, in both formats;
-- [ ] the field stays top-level after `With` and `WithGroup`;
-- [ ] the level filters records.
+- [ ] the field is present when the context has an ID, and absent when it has none or an empty one, in both formats;
+- [ ] the field stays top-level after `With` and `WithGroup`, while attrs added after a group stay inside it, with several attrs in one `With` and nested groups;
+- [ ] the zero `config.Log` writes JSON;
+- [ ] the level filters records;
+- [ ] the handler passes the standard library's `testing/slogtest` suite twice: as is, and through a context with a request ID, with the ID checked at the top level.
+
+**Known pitfalls (verified):**
+- Adding the field to the record (`Record.AddAttrs`) puts it inside any group opened with `WithGroup`. The handler therefore records its `WithAttrs` and `WithGroup` calls and, when a group is open, adds the field to the base handler first and replays them. Without a group it adds the field to the record directly.
+- slogtest logs without a context, so it reaches only the path without a request ID. A second run through a context with an ID covers the replay. Verified with mutations: a replay that drops groups fails the second run (`WithGroup`, `multi-With`, empty and nested-empty groups). A replay that keeps only the last attr of each `With` passes slogtest, because its `With` calls carry one attr each, but fails the test with two attrs in one `With`.
+- The replay costs allocations per record (about 15 in a benchmark, against none without a group). It runs only for loggers with a group, and the service does not use groups on hot paths.
 
 ### Task 4: problem+json writer
 Commit: `feat(problem): add RFC 9457 problem details writer`
