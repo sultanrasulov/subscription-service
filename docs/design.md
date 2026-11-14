@@ -490,7 +490,7 @@ One application service, with one method per use case. It depends on the two dom
 - The service reads only process environment variables, using the `caarlos0/env` library. It does not read files itself.
 - Parsing reports every missing or malformed variable at once. A validation step then checks meaning: the log level is a known value, the port is in range, durations and pool size are positive, the request timeout is shorter than the write timeout, and the shutdown timeout is not shorter than the request timeout.
 - **docker compose** supplies the values through `env_file`: first the committed `.env.example`, then an optional local `.env`, which is gitignored and overrides the example.
-- **`make run`** loads the same two files in the same order.
+- **`make run`** loads the same two files in the same order. Variables already set in the shell win over both files, as with Compose interpolation and dotenv tools, so `POSTGRES_PORT=55432 make db` and `POSTGRES_PORT=55432 make run` agree on the port.
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -717,7 +717,7 @@ While this document is a draft, every decision is written in its final form wher
 | 25 | Database access | Hand-written SQL on pgx v5 |
 | 26 | Collation | `pg_c_utf8` on the `service_name` column and on the filter value in queries; compose needs no initdb locale settings; tests deliberately run on a UTF8 database with the `C` locale to prove the result does not depend on the locale; a non-UTF8 database fails the first migration by design |
 | 27 | Configuration | Environment variables, supplied from env files; Go does not read `.env` itself |
-| 28 | Env files | `.env.example` committed; compose and `make run` read `.env.example`, then an optional `.env` |
+| 28 | Env files | `.env.example` committed; compose and `make run` read `.env.example`, then an optional `.env`. *(Shell precedence for `make run` added by #68.)* |
 | 29 | Router | Standard library router |
 | 30 | Swagger | Code-first swaggo, specification only (no generated Go code), not committed, embedded, Swagger 2.0, always on |
 | 31 | Logging | slog JSON, request middleware, each error logged once. *(Format made selectable by #65.)* |
@@ -757,3 +757,4 @@ While this document is a draft, every decision is written in its final form wher
 | 65 | Log format | `LOG_FORMAT`: `json` (default) or `text`, matched exactly; JSON for compose and log collectors, text for local reading (§7, §8) |
 | 66 | Database connect timeout | `POSTGRES_CONNECT_TIMEOUT`, default 5 s, passed to pgx as a duration; bounds every new connection and the startup ping. Other pool settings keep pgx defaults until a §13 trigger |
 | 67 | Integration test isolation | One container per test package; each test creates its own database (`TEMPLATE template0`, UTF8, `C` locale) and drops it at the end; tests run in parallel |
+| 68 | `make run` precedence | Variables already set in the shell win over `.env.example` and `.env`, as with Compose interpolation and dotenv tools (§7) |

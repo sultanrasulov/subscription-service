@@ -391,20 +391,33 @@ Commit: `feat: wire the service in main and run it locally`
 **Scope:** `cmd/subscription-service`, `compose.dev.yaml`, the Make targets `db` and `run`.
 
 **Rules:**
-- The wiring follows design §3.3–§3.4: config → logger → pool → migrations → handler → listen → serve.
-- On config errors, every problem is printed and the process exits non-zero.
-- Signals: SIGINT and SIGTERM.
-- The log shows `server started`, `shutting down` and `server stopped`. The pool closes last.
-- `shutting down` marks the moment the signal arrives, so it is logged from `context.AfterFunc(ctx, …)`, not after the serve function returns: that function returns only once the in-flight requests have finished, which would put the line next to `server stopped`.
+- `main` only calls `os.Exit(code(…))`, because `os.Exit` skips deferred calls. `code` owns the process: its environment, its signals (SIGINT and SIGTERM) and its exit code.
+- `code` loads the configuration, then calls `run(ctx, cfg, log)`.
+- **Fatal errors are logged once, by `code`, never by `run`** (design §8). `run` only returns errors, with context.
+  - An invalid configuration is logged with the default logger (JSON, decision #65), because the configuration decides the format.
+  - Every later error uses the configured logger.
+  - Exit code 1 in both cases.
+- `run` wires the service in the order of design §3.3–§3.4: pool → migrations → handler → listen → serve. The pool closes last.
+- The log shows `server started`, `shutting down` and `server stopped`.
+  - `shutting down` marks the moment the signal arrives, so it is logged from `context.AfterFunc(ctx, …)`, not after the serve function returns: that function returns only once the in-flight requests have finished, which would put the line next to `server stopped`.
+  - Before logging `server stopped`, `run` waits for that notice if it has started, so the lines stay in order.
+- `main` turns `os.Environ()` into the map `config.Load` takes with its own helper (the first `=` splits), so the configuration library stays inside `internal/platform/config`.
 - `compose.dev.yaml` publishes the database on loopback at `POSTGRES_PORT`, defaulting to 5432 inside the file. Only `make db` uses it (design §10.3).
-- `make run` loads `.env.example`, then an optional `.env` (design §7).
+- `make run` loads `.env.example`, then an optional `.env`; variables already set in the shell win, as with Compose interpolation and dotenv tools (design §7, decision #68).
 
-**Done when** (manual):
-- [ ] after `make db` and `make run`, every route answers as specified;
-- [ ] Ctrl-C exits 0 with the shutdown lines;
-- [ ] without a database, and with an invalid `LOG_LEVEL`, the process exits quickly with a clear error.
+**Done when:**
+- [ ] tests cover the environment helper, an invalid configuration logged once as JSON with exit 1, a startup failure logged once in the configured format with exit 1 and no password, and `run` against a real database: `/health` and `/ready` answer, and after the signal the lifecycle lines come in order;
+- [ ] by hand, after `make db` and `make run`: every route answers as specified, and Ctrl-C ends with `shutting down` and `server stopped`;
+- [ ] by hand, the built binary exits 0 on SIGINT and on SIGTERM, and exits 1 quickly with one clear line both without a database and with an invalid `LOG_LEVEL`.
 
-**Known pitfall (verified):** compose interpolation (`${…}` in a compose file) reads only the shell and `.env`, never `env_file`. That is why `compose.dev.yaml` needs its own default for `POSTGRES_PORT`.
+**Known pitfalls (verified):**
+- Compose interpolation (`${…}` in a compose file) reads only the shell and `.env`, never `env_file`. That is why `compose.dev.yaml` needs its own default for `POSTGRES_PORT`.
+- On a machine where 5432 and 8080 are taken, a local `.env` with `POSTGRES_PORT` and `HTTP_ADDR` moves both, for `make db` and `make run` alike.
+- `make` itself reports `Interrupt` after Ctrl-C, because it receives the signal too. Check the service's own exit code on the built binary.
+- Loading the env files on top of the shell made `POSTGRES_PORT=55432 make db && POSTGRES_PORT=55432 make run` start the database on 55432 and connect to 5432: `make db` goes through Compose interpolation, where the shell wins. The recipe saves the exported variables (`export -p`), loads the files and restores them, so both targets follow one rule. Values with spaces and quotes survive the round trip (verified in dash, the `/bin/sh` here).
+- `go run` may start the binary from the build cache (`~/.cache/go-build/…`) rather than a temporary directory; find its PID by its parent, not by a path pattern, when signaling it by hand.
+- A signal that arrives during startup, before the server listens (for example during the database ping), makes `run` return `context canceled`, logged as `service failed` with exit 1. The window is short, since Compose starts the app only after the database is healthy, and it is not handled separately.
+- Mutations confirmed the fatal-error rule: logging the error in `run` as well, or logging `service failed` with the default logger, each failed the startup-failure test.
 
 ### Task 10: Container image and full stack
 Commit: `feat: add Dockerfile and full compose stack`
