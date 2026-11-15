@@ -23,4 +23,8 @@ var (
 	ErrInvalidMonth = fmt.Errorf("%w: month must be between 1 and 12", ErrInvalid)
 	// ErrYearOutOfRange reports a year outside MinYear to MaxYear.
 	ErrYearOutOfRange = fmt.Errorf("%w: year must be between %d and %d", ErrInvalid, MinYear, MaxYear)
+	// ErrPriceOutOfRange reports a price below 0 or above MaxPrice.
+	ErrPriceOutOfRange = fmt.Errorf("%w: price must be between 0 and %d", ErrInvalid, MaxPrice)
+	// ErrNilUserID reports the nil UUID as a user ID.
+	ErrNilUserID = fmt.Errorf("%w: user ID must not be the nil UUID", ErrInvalid)
 )

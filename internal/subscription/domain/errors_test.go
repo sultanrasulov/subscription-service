@@ -11,8 +11,10 @@ import (
 // them by category and by identity, so each one must wrap ErrInvalid and be
 // distinct from all the others.
 var validationErrors = map[string]error{
-	"ErrInvalidMonth":   domain.ErrInvalidMonth,
-	"ErrYearOutOfRange": domain.ErrYearOutOfRange,
+	"ErrInvalidMonth":    domain.ErrInvalidMonth,
+	"ErrYearOutOfRange":  domain.ErrYearOutOfRange,
+	"ErrPriceOutOfRange": domain.ErrPriceOutOfRange,
+	"ErrNilUserID":       domain.ErrNilUserID,
 }
 
 func TestValidationErrors_AreInvalid(t *testing.T) {

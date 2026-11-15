@@ -17,6 +17,8 @@ func TestTypes_HoldPrivateValuesOnly(t *testing.T) {
 
 	for _, v := range []any{
 		domain.MonthYear{},
+		domain.Price{},
+		domain.UserID{},
 	} {
 		typ := reflect.TypeOf(v)
 		t.Run(typ.Name(), func(t *testing.T) {
