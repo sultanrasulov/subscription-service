@@ -142,7 +142,7 @@ Commit: `feat(config): load and validate configuration from environment`
   - `POSTGRES_SSLMODE` is a libpq mode;
   - request timeout shorter than write timeout;
   - shutdown timeout not shorter than request timeout.
-- Non-obvious fields carry a short "why" comment pointing at the design.
+- Non-obvious fields carry a short "why" comment.
 - `LOG_FORMAT` is its own type with exactly two values, `json` (default) and `text` (decision #65). Like the level, it is checked while parsing, so an unknown value is a parse error.
 - `POSTGRES_CONNECT_TIMEOUT` (default 5 s, decision #66) is a duration above zero. Other pool settings are not configurable: they keep pgx's defaults (design §13).
 - `POSTGRES_PASSWORD` is a `Secret`. fmt (`%v`, `%+v`, `%#v`, `%s`, `%q`), slog and encoding/json show `[REDACTED]`, even when a whole config struct is printed; go vet rejects the other verbs for this type. `Secret` deliberately does not implement `fmt.Formatter`, which would only silence vet while `%p` still bypasses it. Only `Reveal` returns the value, and only the connection string calls it (CLAUDE.md, "Never log secrets").

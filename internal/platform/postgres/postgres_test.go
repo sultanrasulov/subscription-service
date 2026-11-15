@@ -395,7 +395,7 @@ func TestMigrate_LeavesPoolClosable(t *testing.T) {
 }
 
 // pg_c_utf8 exists only in UTF8 databases, so the first migration fails on any
-// other encoding by design (design §5.2).
+// other encoding, by design.
 func TestMigrate_FailsOnNonUTF8Database(t *testing.T) {
 	t.Parallel()
 
@@ -409,7 +409,7 @@ func TestMigrate_FailsOnNonUTF8Database(t *testing.T) {
 	}
 
 	// The failed migration leaves version 1 dirty; the next start must refuse
-	// and point to the manual recovery (design §5.3).
+	// and point to the manual recovery.
 	err = Migrate(t.Context(), pool, migrations.FS, discardLogger())
 	if err == nil || !strings.Contains(err.Error(), "dirty") || !strings.Contains(err.Error(), "migrate force") {
 		t.Errorf("second Migrate() error = %v, want the dirty-version error", err)

@@ -1,5 +1,5 @@
-// Package config loads the service configuration from environment variables
-// (design §7). It never reads files: docker compose and `make run` put the
+// Package config loads the service configuration from environment variables.
+// It never reads files: docker compose and `make run` put the
 // values into the process environment.
 //
 // Each section of the configuration lives in its own file, together with the

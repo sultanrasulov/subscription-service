@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 
 BIN := bin/subscription-service
-# The single source of the linter version; CI reads the same file (design §10.5).
+# The single source of the linter version; CI reads the same file.
 GOLANGCI_LINT_VERSION := $(shell cat .golangci-lint-version)
 # Installed once under a versioned name: later runs need no network, and a new
 # version in .golangci-lint-version is a new file name, so make installs it.
@@ -24,8 +24,8 @@ db: ## Start only Postgres, published on 127.0.0.1 (compose.dev.yaml)
 	docker compose -f compose.yaml -f compose.dev.yaml up -d --wait postgres
 
 # Variables already set in the shell win over both files, as with Compose
-# interpolation and dotenv (design §7): they are saved, the files are loaded,
-# and the saved ones are restored.
+# interpolation and dotenv: they are saved, the files are loaded, and the
+# saved ones are restored.
 run: swagger ## Run the service on the host: .env.example, then an optional .env; the shell wins
 	saved=$$(export -p) && set -a && . ./.env.example && if [ -f .env ]; then . ./.env; fi && set +a && eval "$$saved" && go run ./cmd/subscription-service
 

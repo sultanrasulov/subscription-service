@@ -12,7 +12,7 @@ import (
 	"github.com/sultanrasulov/subscription-service/internal/platform/problem"
 )
 
-// readyTimeout bounds the readiness check's database ping (design §4.5).
+// readyTimeout bounds the readiness check's database ping.
 const readyTimeout = time.Second
 
 // Options configures the service's HTTP handler.
@@ -45,7 +45,7 @@ func NewHandler(o Options) http.Handler {
 	mux.HandleFunc("GET /swagger/doc.json", swaggerSpec(o.Logger, o.Swagger))
 	// More specific than "GET /swagger/", so ServeMux sends doc.json to the
 	// handler above: the UI library would serve it from generated Go code,
-	// which this project does not have (design §9).
+	// which this project does not have.
 	mux.Handle("GET /swagger/", httpSwagger.Handler(httpSwagger.URL("/swagger/doc.json")))
 	if o.Register != nil {
 		o.Register(mux)
@@ -54,8 +54,7 @@ func NewHandler(o Options) http.Handler {
 }
 
 // health is liveness: the process is up and serving. It never touches the
-// database, so a database outage does not get healthy instances restarted
-// (design §4.5).
+// database, so a database outage does not get healthy instances restarted.
 func health(w http.ResponseWriter, _ *http.Request) {
 	writeOK(w)
 }
@@ -83,7 +82,7 @@ func writeOK(w http.ResponseWriter) {
 
 // swaggerSpec serves swagger.json from fsys, read once here. A missing or
 // unreadable spec is a warning at startup and a 404 for the route, never a
-// failure: documentation must not stop the service (design §9).
+// failure: documentation must not stop the service.
 func swaggerSpec(log *slog.Logger, fsys fs.FS) http.HandlerFunc {
 	spec, err := fs.ReadFile(fsys, "swagger.json")
 	if err != nil {
@@ -101,7 +100,7 @@ func swaggerSpec(log *slog.Logger, fsys fs.FS) http.HandlerFunc {
 }
 
 // routerErrors rewrites the router's own 404 and 405 responses, which
-// ServeMux writes as plain text, into problem+json (design §4.4).
+// ServeMux writes as plain text, into problem+json.
 //
 // A request that matched a route goes straight to the mux, and so does one
 // the mux redirects to a canonical path that matches: for those ServeMux

@@ -352,7 +352,7 @@ func TestRecoverPanics_RepanicsErrAbortHandler(t *testing.T) {
 		if strings.Contains(buf.String(), "panic recovered") {
 			t.Errorf("ErrAbortHandler was logged as a panic:\n%s", buf.String())
 		}
-		// The aborted request is still logged once (design §8).
+		// The aborted request is still logged once.
 		if n := len(linesWithMsg(logLines(t, &buf), "request completed")); n != 1 {
 			t.Errorf("want one access log line for the aborted request, got %d:\n%s", n, buf.String())
 		}

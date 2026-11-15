@@ -5,7 +5,7 @@ import (
 	"log/slog"
 )
 
-// Log configures logging (design §8).
+// Log configures logging.
 type Log struct {
 	// Level accepts the slog level names: debug, info, warn and error.
 	// The env library parses it through slog.Level's UnmarshalText, which

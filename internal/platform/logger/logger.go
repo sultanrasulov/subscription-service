@@ -1,12 +1,11 @@
-// Package logger builds the service's structured logger (design §8).
+// Package logger builds the service's structured logger.
 //
 // Records are JSON or text, as configured. A request ID stored in the context
 // with WithRequestID is added to every record logged with that context, as a
 // top-level request_id field in both formats.
 //
 // New writes wherever w points; main passes os.Stdout, because the service
-// emits one event stream and the environment routes it (twelve-factor XI,
-// design §8).
+// emits one event stream and the environment routes it (twelve-factor XI).
 package logger
 
 import (
@@ -21,7 +20,7 @@ import (
 const requestIDKey = "request_id"
 
 // New returns a logger that writes to w at cfg.Level, in cfg.Format.
-// Any format other than text is written as JSON, the default (decision #65).
+// Any format other than text is written as JSON, the default.
 func New(w io.Writer, cfg config.Log) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: cfg.Level}
 

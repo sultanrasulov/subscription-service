@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Postgres configures the database connection (design §7).
+// Postgres configures the database connection.
 //
 // POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB are the names the Postgres
 // image reads itself, so one env file configures both the service and the
@@ -35,7 +35,7 @@ type Postgres struct {
 var sslModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
 
 // ConnString returns a postgres:// URL for pgx. The user and the password are
-// escaped, so reserved URL characters in them survive (design §7).
+// escaped, so reserved URL characters in them survive.
 func (p Postgres) ConnString() string {
 	u := url.URL{
 		Scheme:   "postgres",

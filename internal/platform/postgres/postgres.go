@@ -1,5 +1,5 @@
 // Package postgres opens the database connection pool and applies the
-// embedded schema migrations (design §5.3). It knows nothing about
+// embedded schema migrations. It knows nothing about
 // subscriptions; the adapters in internal/subscription use the pool it opens.
 package postgres
 
@@ -46,8 +46,8 @@ func NewPool(ctx context.Context, cfg config.Postgres) (*pgxpool.Pool, error) {
 
 // poolConfig builds the pool configuration. The connect timeout is set as a
 // duration on the connection config, not as connect_timeout in the connection
-// string, which takes whole seconds (design §7). The other pool settings keep
-// pgx's defaults (design §13).
+// string, which takes whole seconds. The other pool settings keep pgx's defaults
+// until load shows a need.
 func poolConfig(cfg config.Postgres) (*pgxpool.Config, error) {
 	pc, err := pgxpool.ParseConfig(cfg.ConnString())
 	if err != nil {

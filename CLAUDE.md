@@ -49,7 +49,7 @@ Dependencies flow `httpapi → application → domain ← postgres`. Adapters ma
 - Simple over clever: no new interface or abstraction without a real second use. Ports exist because adapters implement them. There is no ID-generator or clock interface.
 - Make invalid states unrepresentable. Value objects validate in their constructor, keep their fields unexported, and hold no pointers.
 - Fail explicitly. Wrap errors with context (`%w`), never swallow one, and never panic in a production code path.
-- Comments explain why, not what.
+- Comments explain why, not what, and stand on their own. They never cite the design or this file. They may cite an external, immutable source for detail, such as RFC 9457 §4.2.1 or an upstream issue. Messages shown at runtime cite nothing.
 - Fix lint findings at the cause. `//nolint` only with a reason on the same line.
 
 ## Conventions

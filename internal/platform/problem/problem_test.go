@@ -87,7 +87,7 @@ func TestWrite_OmitsEmptyDetail(t *testing.T) {
 func TestWrite_SetsHeadersLikeHTTPError(t *testing.T) {
 	t.Parallel()
 
-	// The router sets Allow on 405 before the problem is written (design §4.4),
+	// The router sets Allow on 405 before the problem is written,
 	// and a handler may have set Content-Length for a body it never sent.
 	rec := httptest.NewRecorder()
 	rec.Header().Set("Allow", "GET, HEAD")

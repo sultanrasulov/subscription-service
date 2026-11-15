@@ -1,8 +1,8 @@
 BEGIN;
 
--- A month is stored as a date on the 1st of that month (design §5.1).
+-- A month is stored as a date on the 1st of that month.
 -- service_name uses the built-in pg_c_utf8 collation, so lower() handles
--- Cyrillic the same way whatever locale the database was created with (§5.2).
+-- Cyrillic the same way whatever locale the database was created with.
 CREATE TABLE subscriptions (
     id           uuid        PRIMARY KEY,
     user_id      uuid        NOT NULL,

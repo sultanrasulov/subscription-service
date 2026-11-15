@@ -2,7 +2,7 @@
 //
 // The specification is produced by `make swagger` and is not committed.
 // On a clean clone the directory holds only a placeholder, so the service
-// still builds and serves a 404 for the specification (design §9).
+// still builds and serves a 404 for the specification.
 package docs
 
 import "embed"

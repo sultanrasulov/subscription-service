@@ -1,6 +1,6 @@
 // Command subscription-service runs the subscription aggregation REST service.
 //
-// main is the composition root (design §3.3): it owns the process (its
+// main is the composition root: it owns the process (its
 // environment, its signals and its exit code) and wires the packages together
 // by hand.
 //
@@ -38,9 +38,9 @@ func main() {
 
 // code runs the service and returns the process exit code.
 //
-// A fatal error is logged here, once (design §8). The configuration decides
+// A fatal error is logged here, once. The configuration decides
 // the log format, so an invalid configuration is logged with the default
-// logger (JSON, decision #65); every later error uses the configured one.
+// logger (JSON); every later error uses the configured one.
 func code(environ map[string]string, stdout io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -58,8 +58,9 @@ func code(environ map[string]string, stdout io.Writer) int {
 	return 0
 }
 
-// run starts the service and serves until ctx is canceled, in the order of
-// design §3.3–§3.4. It returns errors with context and never logs them.
+// run opens the pool, applies the migrations and serves until ctx is canceled,
+// then shuts the server down before closing the pool. It returns errors with
+// context and never logs them.
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	pool, err := postgres.NewPool(ctx, cfg.Postgres)
 	if err != nil {

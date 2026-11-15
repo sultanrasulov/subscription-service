@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// HTTP configures the HTTP server (design §7).
+// HTTP configures the HTTP server.
 type HTTP struct {
 	Addr string `env:"HTTP_ADDR" envDefault:":8080"`
 
@@ -20,12 +20,12 @@ type HTTP struct {
 
 	// RequestTimeout is the deadline of each request's context. It must be
 	// shorter than WriteTimeout, so the client receives a problem+json
-	// answer before the server closes the connection (design §4.4).
+	// answer before the server closes the connection.
 	RequestTimeout time.Duration `env:"HTTP_REQUEST_TIMEOUT" envDefault:"8s"`
 
 	// ShutdownTimeout is how long graceful shutdown waits for in-flight
 	// requests. It must be at least RequestTimeout, so shutdown never cuts
-	// off a request that is still within its deadline (design §7).
+	// off a request that is still within its deadline.
 	ShutdownTimeout time.Duration `env:"HTTP_SHUTDOWN_TIMEOUT" envDefault:"10s"`
 }
 

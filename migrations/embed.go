@@ -1,4 +1,4 @@
-// Package migrations embeds the versioned SQL migrations (design §5.3).
+// Package migrations embeds the versioned SQL migrations.
 //
 // Each file wraps its statements in BEGIN … COMMIT, so a failed migration
 // leaves no half-changed schema behind.

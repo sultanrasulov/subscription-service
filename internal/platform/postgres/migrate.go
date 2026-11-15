@@ -19,7 +19,7 @@ import (
 //
 // It runs on pool, so there is no second connection string. "Nothing to apply"
 // is success. A dirty version, left by a failed migration, is an error:
-// recovery is a manual `migrate force` (design §5.3). golang-migrate takes a
+// recovery is a manual `migrate force`. golang-migrate takes a
 // Postgres advisory lock, so concurrent starts are safe.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, migrations fs.FS, log *slog.Logger) (err error) {
 	m, closeAll, err := newMigrator(pool, migrations)
@@ -55,7 +55,7 @@ func cleanVersion(m *migrate.Migrate) (uint, error) {
 		return 0, fmt.Errorf("read the migration version: %w", err)
 	case dirty:
 		return 0, fmt.Errorf("migration version %d is dirty: a migration failed; "+
-			"fix it, then run `migrate force` by hand (design §5.3)", version)
+			"fix it, then run `migrate force` by hand", version)
 	}
 	return version, nil
 }

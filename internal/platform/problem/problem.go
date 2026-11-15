@@ -1,9 +1,9 @@
 // Package problem writes RFC 9457 problem details (application/problem+json).
 //
-// It is the one implementation of the service's error format (design §4.4,
-// decision #57): the HTTP server uses it for router errors and panics, and the
-// HTTP adapter for validation errors, "not found" and internal errors. It knows
-// nothing about subscriptions.
+// It is the one implementation of the service's error format: the HTTP server
+// uses it for router errors and panics, and the HTTP adapter for validation
+// errors, "not found" and internal errors. It knows nothing about
+// subscriptions.
 package problem
 
 import (

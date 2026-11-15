@@ -1,9 +1,9 @@
-# Development overlay, used only by `make db` (design §10.3). Its name is not
+# Development overlay, used only by `make db`. Its name is not
 # compose.override.yaml on purpose: Compose would merge that automatically and
 # change a reviewer's plain `docker compose up`.
 services:
   postgres:
     ports:
       # Loopback only. Compose interpolation reads only the shell and .env,
-      # never env_file, so the default lives here (design §7).
+      # never env_file, so the default lives here.
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"

@@ -5,8 +5,7 @@ import "log/slog"
 // redacted replaces a secret wherever it would otherwise be printed.
 const redacted = "[REDACTED]"
 
-// Secret is a configuration value that must never be printed or logged
-// (CLAUDE.md, "Never log secrets").
+// Secret is a configuration value that must never be printed or logged.
 //
 // fmt (with %v, %+v, %#v, %s and %q), slog and encoding/json all show
 // "[REDACTED]" instead of the value, even when a whole configuration struct

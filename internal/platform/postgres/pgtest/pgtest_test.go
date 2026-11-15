@@ -8,7 +8,7 @@ import (
 )
 
 // The tests must run on the image the stack runs, read from compose.yaml, the
-// single source of that version (design §10.5).
+// single source of that version.
 func TestImage_ReadsComposeFile(t *testing.T) {
 	t.Parallel()
 

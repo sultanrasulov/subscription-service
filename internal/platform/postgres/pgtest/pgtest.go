@@ -1,11 +1,11 @@
 // Package pgtest starts a disposable PostgreSQL container for integration
-// tests (design §11). It is reused by every package that tests against a real
+// tests. It is reused by every package that tests against a real
 // database.
 //
 // The image is read from compose.yaml, so the tests always run on the version
-// the stack runs (design §10.5). The database is created with the C locale and
+// the stack runs. The database is created with the C locale and
 // UTF8 encoding, the least forgiving setup, so every integration test also
-// shows that results do not depend on the locale (design §5.2).
+// shows that results do not depend on the locale.
 package pgtest
 
 import (
@@ -91,7 +91,7 @@ func Start(ctx context.Context) (config.Postgres, func(context.Context) error, e
 		tcpostgres.WithDatabase(database),
 		tcpostgres.WithUsername(user),
 		tcpostgres.WithPassword(password),
-		// C alone would give SQL_ASCII, where pg_c_utf8 does not exist (design §5.2).
+		// C alone would give SQL_ASCII, where pg_c_utf8 does not exist.
 		testcontainers.WithEnv(map[string]string{"POSTGRES_INITDB_ARGS": "--locale=C --encoding=UTF8"}),
 		tcpostgres.BasicWaitStrategies(),
 	)

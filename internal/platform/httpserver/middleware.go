@@ -1,6 +1,6 @@
 // Package httpserver is the service's HTTP server: its middleware, its
-// operational routes and its lifecycle (design §3.4, §4.4, §4.5, §8). It knows
-// nothing about subscriptions; the HTTP adapter registers the API on its mux.
+// operational routes and its lifecycle. It knows nothing about subscriptions;
+// the HTTP adapter registers the API on its mux.
 package httpserver
 
 import (
@@ -39,7 +39,7 @@ func middleware(h http.Handler, log *slog.Logger, timeout time.Duration) http.Ha
 
 // requestID gives every request an ID: the incoming X-Request-ID when it is
 // safe to reuse, a new UUID v7 otherwise. The ID goes into the response header
-// and into the request context, where the logger picks it up (design §8).
+// and into the request context, where the logger picks it up.
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(requestIDHeader)
@@ -139,7 +139,7 @@ func recoverPanics(log *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// deadline gives every request context a deadline (design §4.4). The context
+// deadline gives every request context a deadline. The context
 // reaches pgx, so a hung query is canceled. Turning an expired deadline into
 // a 503 is the HTTP adapter's job, in its error mapping.
 func deadline(timeout time.Duration) func(http.Handler) http.Handler {

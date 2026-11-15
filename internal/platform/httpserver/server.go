@@ -12,13 +12,13 @@ import (
 	"github.com/sultanrasulov/subscription-service/internal/platform/config"
 )
 
-// NewServer returns an HTTP server for h with the configured timeouts
-// (design §7). net/http's own messages, such as TLS handshake errors, go
-// through log at WARN.
+// NewServer returns an HTTP server for h with the configured timeouts.
+// net/http's own messages, such as TLS handshake errors, go through log at
+// WARN.
 //
 // Request contexts do not derive from the service's context: a shutdown must
 // let in-flight requests finish, not cancel them. Each request is bounded by
-// its own deadline instead (design §4.4).
+// its own deadline instead.
 func NewServer(cfg config.HTTP, h http.Handler, log *slog.Logger) *http.Server {
 	return &http.Server{
 		Handler:           h,
@@ -30,8 +30,8 @@ func NewServer(cfg config.HTTP, h http.Handler, log *slog.Logger) *http.Server {
 	}
 }
 
-// Serve serves srv on ln until ctx is canceled, then shuts down gracefully
-// (design §3.4): it stops accepting connections and waits up to
+// Serve serves srv on ln until ctx is canceled, then shuts down gracefully:
+// it stops accepting connections and waits up to
 // shutdownTimeout for in-flight requests.
 //
 // It returns nil after a clean shutdown. If the shutdown overruns, the server
