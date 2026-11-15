@@ -59,6 +59,10 @@ linters:
           allow:
             - $gostd
             - github.com/google/uuid
+            # The external test package imports the package it tests. The
+            # trailing $ makes this an exact match, so a subpackage still needs
+            # its own decision.
+            - github.com/sultanrasulov/subscription-service/internal/subscription/domain$
           deny:
             - pkg: net/http
               desc: the domain knows nothing about HTTP
