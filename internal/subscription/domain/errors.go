@@ -27,4 +27,13 @@ var (
 	ErrPriceOutOfRange = fmt.Errorf("%w: price must be between 0 and %d", ErrInvalid, MaxPrice)
 	// ErrNilUserID reports the nil UUID as a user ID.
 	ErrNilUserID = fmt.Errorf("%w: user ID must not be the nil UUID", ErrInvalid)
+	// ErrEmptyServiceName reports a service name that is empty or only
+	// whitespace.
+	ErrEmptyServiceName = fmt.Errorf("%w: service name must not be empty", ErrInvalid)
+	// ErrServiceNameInvalidCharacters reports a service name with a control
+	// character or with bytes that are not valid UTF-8.
+	ErrServiceNameInvalidCharacters = fmt.Errorf("%w: service name must not contain control characters or invalid UTF-8", ErrInvalid)
+	// ErrServiceNameTooLong reports a service name longer than
+	// MaxServiceNameLength characters.
+	ErrServiceNameTooLong = fmt.Errorf("%w: service name must be at most %d characters", ErrInvalid, MaxServiceNameLength)
 )
