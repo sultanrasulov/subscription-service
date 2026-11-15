@@ -9,10 +9,10 @@ GOLANGCI_LINT := bin/golangci-lint-$(GOLANGCI_LINT_VERSION)
 # swag fails on a directory that does not exist yet; phase 3 adds the HTTP adapter.
 SWAG_DIRS := ./cmd/subscription-service
 
-.PHONY: help swagger build db run up down logs test test-unit lint
+.PHONY: help swagger build db run up down logs test test-unit lint pre-commit-install pre-commit-run
 
 help: ## List the targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 swagger: ## Generate the Swagger specification into docs/swagger
 	go tool swag init --quiet -g main.go -d $(SWAG_DIRS) -o docs/swagger --outputTypes json,yaml
@@ -46,6 +46,14 @@ test-unit: ## Run unit tests only, without Docker
 
 lint: $(GOLANGCI_LINT) ## Run golangci-lint at the version in .golangci-lint-version
 	$(GOLANGCI_LINT) run
+
+# pre-commit itself is a Python tool, installed once per machine, for example
+# with `pipx install pre-commit`; the hooks it runs are pinned in the config.
+pre-commit-install: ## Install the git hook that runs .pre-commit-config.yaml on every commit
+	pre-commit install
+
+pre-commit-run: ## Run every pre-commit hook on every file
+	pre-commit run --all-files
 
 $(GOLANGCI_LINT):
 	GOBIN=$(CURDIR)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)

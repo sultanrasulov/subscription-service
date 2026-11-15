@@ -45,6 +45,19 @@ updates:
       prefix: chore
       include: scope
 
+  # .pre-commit-config.yaml's hook repositories, pinned by SHA with a frozen
+  # comment that Dependabot updates together with the SHA.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      pre-commit:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
+      include: scope
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
