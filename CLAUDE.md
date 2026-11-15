@@ -4,11 +4,11 @@
 A REST service that stores users' online subscriptions and reports their total cost over a period (Effective Mobile Golang Developer test assignment).
 The approved design is `docs/design.md`. Read the relevant section before changing behavior. It is referenced, not imported, because of its size.
 Approach: Domain-Driven Design, kept small. See "Domain modeling".
-Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), Docker Compose. Exact versions live only in `go.mod`, the `Dockerfile` and `compose.yaml`. Don't repeat them here.
+Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), Docker Compose. Each exact version lives in one file only: `go.mod`, the `Dockerfile`, `compose.yaml`, `.golangci-lint-version` or `.github/workflows/ci.yml`. Never repeat a version anywhere else, including here and in plans (design §10.5).
 - HTTP: the standard library `net/http` `ServeMux`, not chi, gin or echo.
 - Database: pgx v5 with hand-written SQL. No ORM, query builder or sqlc.
 - Migrations: golang-migrate, embedded with `go:embed` and applied at startup.
-- Logging: `log/slog` with a JSON handler, not zap or zerolog.
+- Logging: `log/slog`, not zap or zerolog. JSON handler by default; `LOG_FORMAT=text` for reading logs locally.
 - Config: `caarlos0/env`, from environment variables only. No viper, and no reading of `.env` in Go.
 - JSON: `encoding/json` (v1), not `encoding/json/v2` until v2 is a stable part of Go (design §13).
 - IDs: `github.com/google/uuid`, version 7.
@@ -17,7 +17,6 @@ Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), D
 - Dependency injection: manual wiring in `cmd/subscription-service`. No Wire and no DI framework.
 
 ## Commands
-These targets are available from phase 1, when the Makefile is added (design §10.1).
 - `docker compose up --build`: the full stack, as a reviewer runs it.
 - `make db`, then `make run`: Postgres in Docker, the service on the host.
 - `make test`: all tests with `-race`. Integration tests need Docker running.
@@ -49,7 +48,7 @@ Dependencies flow `httpapi → application → domain ← postgres`. Adapters ma
 - Simple over clever: no new interface or abstraction without a real second use. Ports exist because adapters implement them. There is no ID-generator or clock interface.
 - Make invalid states unrepresentable. Value objects validate in their constructor, keep their fields unexported, and hold no pointers.
 - Fail explicitly. Wrap errors with context (`%w`), never swallow one, and never panic in a production code path.
-- Comments explain why, not what.
+- Comments explain why, not what, and stand on their own. They never cite the design or this file. They may cite an external, immutable source for detail, such as RFC 9457 §4.2.1 or an upstream issue. Messages shown at runtime cite nothing.
 - Fix lint findings at the cause. `//nolint` only with a reason on the same line.
 
 ## Conventions
@@ -57,7 +56,7 @@ Dependencies flow `httpapi → application → domain ← postgres`. Adapters ma
 - Logging: each error is logged once, at the HTTP boundary. The application layer returns errors and logs only business events. Always use the slog `*Context` methods, so `request_id` is attached. Never log secrets.
 - Money: whole rubles as integers, never floats.
 - Months: `MonthYear` in the domain, stored as a date on the 1st of the month, sent as `MM-YYYY` in the API.
-- A new environment variable goes into the config struct (with validation) and into `.env.example` in the same change.
+- A new environment variable goes into the config struct (with validation) and into `.env.example` in the same change. A compose-only variable, such as `APP_PORT`, is read by interpolation from the shell or `.env`, so it goes into `.env.example` as a commented line only.
 
 ## API
 - REST + JSON under `/api/v1`. Errors are RFC 9457 problem+json.
@@ -108,3 +107,4 @@ Dependencies flow `httpapi → application → domain ← postgres`. Adapters ma
 - Never create `compose.override.yaml`. Compose merges it automatically and would change a reviewer's `docker compose up`. Local development uses `compose.dev.yaml` through `make db` (design §10.3).
 - A failed migration leaves its version marked dirty. Editing the applied file does not help. Recovery is a manual `migrate force` (design §5.3).
 - Encoding a nil slice produces `null`, so list responses must return an initialized slice (design §4.2).
+- A Go update changes `toolchain` in `go.mod` and the `golang` image in the `Dockerfile` together; the builder fails otherwise. A Dependabot PR for the image stays red until `toolchain` is bumped in the same PR (design §10.2).

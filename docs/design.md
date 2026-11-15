@@ -38,7 +38,7 @@ The assignment also says:
 ### 1.2 Success criteria
 
 - From a clean clone, `docker compose up --build` starts the service and its database with no other steps.
-- The service is reachable on `http://localhost:8080`, and Swagger UI on `http://localhost:8080/swagger/index.html`.
+- The service is reachable on `http://localhost:8080`, and Swagger UI on `http://localhost:8080/swagger/index.html`. If 8080 is taken, `APP_PORT` moves the host port (§10.3).
 - All six endpoints behave as specified in §4, including every documented error case.
 - CI is green: lint, unit tests, integration tests, and a smoke test against the composed stack.
 
@@ -183,7 +183,7 @@ subscription-service/
 │   │       └── postgres/          # driven: implements the Repository and TotalCostReader ports
 │   └── platform/                  # technical infrastructure; knows nothing about subscriptions
 │       ├── config/                # environment → typed, validated configuration
-│       ├── logger/                # structured JSON logging with request IDs
+│       ├── logger/                # structured logging (JSON or text) with request IDs
 │       ├── postgres/              # connection pool and migration runner
 │       ├── problem/               # RFC 9457 problem+json: the one implementation of the error format
 │       └── httpserver/            # server, middleware, /health, /ready, Swagger, graceful shutdown
@@ -376,9 +376,9 @@ Every error response is RFC 9457 `application/problem+json`, including responses
 | The request ran past its deadline | 503 | request timed out |
 | Anything else | 500 | internal server error; the real error is logged once, with the request ID |
 
-**Request deadline.** The server's write timeout closes the connection, but it does not cancel the handler's context. A hung database query would keep running after the client is gone. Middleware therefore gives every request a context with a deadline (`HTTP_REQUEST_TIMEOUT`). That context reaches pgx, so a hung query is cancelled, and the client receives a 503 problem+json instead of a dropped connection. 503 is also what the standard library's timeout handler uses. 504 is meant for gateways waiting on an upstream server.
+**Request deadline.** The server's write timeout closes the connection, but it does not cancel the handler's context. A hung database query would keep running after the client is gone. Middleware therefore gives every request a context with a deadline (`HTTP_REQUEST_TIMEOUT`). That context reaches pgx, so a hung query is canceled, and the client receives a 503 problem+json instead of a dropped connection. 503 is also what the standard library's timeout handler uses. 504 is meant for gateways waiting on an upstream server.
 
-**Client disconnects.** When the client goes away, the request context is cancelled. That is not a server failure, so it is logged at WARN level and is not counted as a 500.
+**Client disconnects.** When the client goes away, the request context is canceled. That is not a server failure, so it is logged at WARN level and is not counted as a 500.
 
 **One implementation of the format.** Two places write problem+json:
 - the HTTP server: router errors and panics;
@@ -415,7 +415,7 @@ The standard router answers unmatched routes and wrong methods in plain text. A 
 | `updated_at` | timestamptz | no | Set on insert; the update statement itself sets it to the current time (no trigger) |
 
 - A month is stored as a date on the 1st of that month, so values order and compare correctly. This fixes the earlier draft, which stored `MM-YYYY` strings.
-- Database constraints repeat the domain rules as a last line of defence.
+- Database constraints repeat the domain rules as a last line of defense.
 - `created_at` and `updated_at` exist for operations only. Neither the domain nor the API uses them.
 - **Indexes:** on `user_id`, and on the lower-cased `service_name` for case-insensitive matching.
 
@@ -490,7 +490,7 @@ One application service, with one method per use case. It depends on the two dom
 - The service reads only process environment variables, using the `caarlos0/env` library. It does not read files itself.
 - Parsing reports every missing or malformed variable at once. A validation step then checks meaning: the log level is a known value, the port is in range, durations and pool size are positive, the request timeout is shorter than the write timeout, and the shutdown timeout is not shorter than the request timeout.
 - **docker compose** supplies the values through `env_file`: first the committed `.env.example`, then an optional local `.env`, which is gitignored and overrides the example.
-- **`make run`** loads the same two files in the same order.
+- **`make run`** loads the same two files in the same order. Variables already set in the shell win over both files, as with Compose interpolation and dotenv tools, so `POSTGRES_PORT=55432 make db` and `POSTGRES_PORT=55432 make run` agree on the port.
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -502,25 +502,29 @@ One application service, with one method per use case. It depends on the two dom
 | `HTTP_REQUEST_TIMEOUT` | `8s` | Deadline for each request's context (§4.4). Must be shorter than the write timeout, so the client receives a problem+json response instead of a dropped connection |
 | `HTTP_SHUTDOWN_TIMEOUT` | `10s` | How long graceful shutdown waits for in-flight requests. Must be at least the request timeout, so shutdown never cuts off a request that is still within its deadline. Docker's stop grace period must be longer (§10.3) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `LOG_FORMAT` | `json` | `json` or `text`, matched exactly. JSON is for machines (containers, log collectors), so compose needs no setting; text is for reading logs locally and goes in a developer's `.env` |
 | `POSTGRES_HOST` | required | `localhost` in `.env.example`; compose overrides it with the database service name |
 | `POSTGRES_PORT` | `5432` | Also the host port that the development overlay publishes (§10.3) |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | required | The same names the Postgres image reads, so one env file configures both containers without duplicated values |
 | `POSTGRES_SSLMODE` | `disable` | |
 | `POSTGRES_MAX_CONNS` | `10` | |
+| `POSTGRES_CONNECT_TIMEOUT` | `5s` | Bounds opening every new connection and the ping at startup. Without it pgx waits for the operating system's TCP timeout, minutes long. Passed to pgx as a duration, so sub-second values work. The other pool settings (minimum connections, connection lifetime and idle time) keep pgx's defaults (§13) |
 
 Compose interpolation (`${VAR}` in a compose file) reads only the shell and `.env`, not `env_file`. Sharing the image's variable names is what lets a clean clone start without copying `.env.example` to `.env`. The app's other `POSTGRES_*` names are not variables the image interprets.
+
+`APP_PORT` (default 8080) is a compose-only variable: the host port that `docker compose up` publishes the app on. The service does not read it. Interpolation reads it from the shell or `.env`, for example `APP_PORT=18080 docker compose up`, so `.env.example` lists it only as a comment.
 
 The connection string is built so that passwords containing reserved URL characters work.
 
 ## 8. Logging
 
-- **Format:** structured JSON (`log/slog`) to stdout. The level comes from `LOG_LEVEL`.
+- **Format:** structured `log/slog` records to stdout, JSON by default or text with `LOG_FORMAT=text` for local reading (§7). The level comes from `LOG_LEVEL`. Both formats carry the same fields, including the request ID.
 - **Request ID:** an incoming `X-Request-ID` is reused if it is at most 64 printable characters; otherwise a new one is generated. The ID is returned in the response header and attached to every log record written while handling the request.
 - **Request log:** one `request completed` line per request, with method, path, status, duration and request ID. A request abandoned by the client is recorded with status **499**, nginx's "client closed request" convention. Nothing is sent to the client, so the log would otherwise show a misleading 200 or 0.
 - **Errors are logged exactly once:**
   - unexpected errors (500) at ERROR level, by the HTTP error writer, with the full error chain;
   - client errors (4xx) only through the request log line;
-  - requests whose context was cancelled because the client disconnected, at WARN level; they are not server errors;
+  - requests whose context was canceled because the client disconnected, at WARN level; they are not server errors;
   - requests that ran past their deadline (503), at WARN level, with the operation that was cut off;
   - panics by the recovery middleware, at ERROR level with the stack trace; the client receives a problem+json 500.
 - **Business events** at INFO level: subscription created, updated and deleted, with the subscription ID and user ID.
@@ -559,10 +563,13 @@ Make is the developer entry point. Go code still compiles without it, and the re
 
 ### 10.2 Dockerfile
 
-- **Builder stage:** the Go Alpine image matching `go.mod`, plus `make`, which the image does not include. It downloads modules, then builds through `make build`. If Swagger generation fails, the image build fails, so a missing specification cannot slip through.
-- **Runtime stage:** Alpine, a non-root user, and the single static binary. Migrations and the Swagger specification are inside the binary. It exposes port 8080. BusyBox `wget` in the image serves the healthcheck.
-- **Signals:** the binary is started in exec form, so it is the container's main process and receives SIGTERM directly. A shell-form command would wrap it in `/bin/sh -c`, which does not forward the signal, and graceful shutdown would never run.
-- The phase 1 plan pins the exact image tags.
+- **Builder stage:** the Go Alpine image matching `go.mod`, plus `make`, which the image does not include. It builds through `make build`, with cache mounts for the module and build caches, so only the modules the build needs are downloaded and both caches persist between builds. If Swagger generation fails, the image build fails, so a missing specification cannot slip through.
+- **Runtime stage:** Alpine, a non-root user with the fixed numeric UID and GID 65532, and the single static binary, owned by root. Migrations and the Swagger specification are inside the binary. It exposes port 8080. BusyBox `wget` in the image serves the healthcheck.
+- **Build context:** `.dockerignore` is an allow-list. Only the files the build reads enter the context, without tests, so a stray file in the working tree (a `.env`, a dump, a stale specification) cannot reach the image.
+- **Signals:** the binary is started in exec form, so it is the container's main process and receives SIGTERM directly. A shell-form command may leave `/bin/sh` as PID 1, which does not forward the signal, so graceful shutdown would never run. Some shells, Alpine's among them, replace themselves with the last command; the exec form does not depend on that.
+- **Toolchain check:** the builder fails unless its Go version equals the `toolchain` line in `go.mod`.
+  - `GOTOOLCHAIN=local` alone is not enough: it ignores the `toolchain` line and checks only the `go` line (verified).
+  - Dependabot does not bump `toolchain` (dependabot-core #13520). A Dependabot pull request for a new `golang` image therefore fails until the same pull request updates `toolchain`, so the drift is visible instead of silent (§10.5).
 
 ### 10.3 Compose files
 
@@ -576,11 +583,12 @@ Make is the developer entry point. Go code still compiles without it, and the re
   - port **not published**, so a reviewer with a local Postgres on 5432 cannot hit "port is already allocated".
 - **`app`:**
   - built from the Dockerfile;
-  - the shared env files, with `POSTGRES_HOST` pointed at the database service;
+  - the shared env files, with `POSTGRES_HOST` and `POSTGRES_PORT` overridden to the database service and its in-network port 5432. `POSTGRES_PORT` has two roles: the host port that `make db` publishes, and the port inside the compose network. A developer's `.env` may change the first, and the override keeps the second. `HTTP_ADDR` has the same two roles (the host address for `make run`, the in-container address), so the `app` service also fixes it to `:8080`, the port that is published and health-checked;
   - starts only after the database is healthy;
-  - publishes 8080;
+  - publishes its port on the loopback interface only, on the host at `APP_PORT` (8080 by default), so a taken 8080 needs no edit to `compose.yaml`. Inside the container it stays 8080, which the healthcheck uses;
   - has a healthcheck on `/ready`;
   - has a stop grace period of 15 s. `docker compose stop` sends SIGTERM and kills the container after the grace period, which is 10 s by default. The grace period must cover the 10 s shutdown timeout plus closing the pool.
+- **Network:** both services share Compose's default network, `<project>_default`, so stacks started with different `-p` never share one. No `network_mode: host`: it would put the database port on the host, break service names and ignore the loopback binding (#70).
 
 `compose.dev.yaml` is a committed development overlay:
 - It publishes the database port on `127.0.0.1` at `POSTGRES_PORT`.
@@ -589,13 +597,37 @@ Make is the developer entry point. Go code still compiles without it, and the re
 
 ### 10.4 CI (GitHub Actions)
 
-The workflow runs on every push and on pull requests to `main`.
+The workflow runs on pushes to `main` and on pull requests to `main`, so every pull request and every merge commit is checked once. Running on every push as well would check a branch with an open pull request twice, because the two events have different refs. A newer push to a pull request cancels its older run; runs on `main` are never canceled, so every merge commit gets a full result.
 
 | Job | Purpose |
 |---|---|
-| lint | golangci-lint at a pinned version. It must be built with a Go version ≥ the module's `go` directive, so a Go update moves this pin too |
+| lint | golangci-lint at the version in `.golangci-lint-version`. It must be built with a Go version ≥ the module's `go` directive, so a Go update moves this pin too |
 | test | All tests, including integration tests on the runner's Docker |
-| smoke | Start the compose stack and wait until it is healthy. Check that `/health` and `/ready` return 200 and that `/swagger/doc.json` is a Swagger 2.0 document. From phase 3, also require at least one documented path. Phase 1 has no endpoints yet, and `/health` and `/ready` are not in Swagger, so that check would fail there. Print the logs on failure; tear down |
+| smoke | Start the compose stack and wait until it is healthy. Check that `/health` and `/ready` return 200 and that `/swagger/doc.json` is a Swagger 2.0 document. From phase 3, also require at least one documented path. Phase 1 has no endpoints yet, and `/health` and `/ready` are not in Swagger, so that check would fail there. Stop the app and require exit 0: an entrypoint that leaves a shell as PID 1 does not forward SIGTERM, so Docker kills the app with 137, and a broken shutdown exits non-zero. Print the logs on failure; tear down |
+
+Every action is pinned to a full commit SHA, with its version in a comment. GitHub's security hardening guide names the full SHA as the only immutable reference to an action, and Dependabot updates both the SHA and the comment.
+
+### 10.5 Dependency updates
+
+- **Dependabot** opens weekly update pull requests for:
+  - Go modules (`gomod`);
+  - the Dockerfile images (`docker`);
+  - the compose images (`docker-compose`);
+  - the GitHub Actions (`github-actions`).
+
+  Minor and patch updates are grouped. The commit messages are `chore(deps): …` (#61). Each update pull request passes the same CI, including smoke, before it is merged.
+- **One version, one file.** Every exact version lives in exactly one of these files:
+  - `go.mod`;
+  - the `Dockerfile`;
+  - `compose.yaml`;
+  - `.golangci-lint-version`;
+  - `.github/workflows/ci.yml`.
+
+  Nothing else repeats it: not documents, plans, Makefiles or Go constants. Documents name the file, never the version. The integration tests read the database image from `compose.yaml`, and the Makefile and CI read the linter version from `.golangci-lint-version`.
+- **Updated by hand:**
+  - the linter version, because Dependabot has no ecosystem for `.golangci-lint-version`;
+  - the `toolchain` line, which Dependabot does not bump (§10.2). The toolchain check makes a Dependabot pull request for the `golang` image fail until `toolchain` is updated in the same pull request.
+- **Postgres major versions are excluded** from automatic updates. A new major needs `pg_upgrade` for the data volume, and the collation rules (§5.2) need 17 or later, so a major upgrade is a design decision.
 
 ## 11. Testing strategy
 
@@ -603,7 +635,7 @@ The workflow runs on every push and on pull requests to `main`.
 |---|---|---|
 | Domain unit tests | Every value object and the aggregate: valid and invalid cases, normalization, boundaries (years 1999/2000 and 2100/2101, months 0/13, prices −1/0/max/max+1, names of 100/101 characters, Cyrillic character counting), the nil user ID, the subscription period (end before start, equal start and end, open-ended, value equality, and that it cannot be changed after construction), invalid zero values rejected by the aggregate | table-driven Go tests |
 | HTTP adapter tests | Every endpoint, through an in-process HTTP recorder, with the real application service over hand-written in-memory fakes of the ports. Covers: status codes, `Location`, response shapes (`items` never `null`, `end_date` omitted), every rule in §4.3, including the decoding traps (`null` in a required field, duplicate keys, `400.0`, a non-object body, trailing data), 413 and 415, 503 when a port call outlives the request deadline, problem+json bodies, router 404/405 as problem+json with `Allow`, all field errors in one response in schema order | standard library |
-| Postgres integration tests | Repository CRUDL and not-found paths; filters; case-insensitive Cyrillic matching, including the index check (§5.2); ordering, pagination and the total; database constraints; migrations up → down → up. **Total cost** for every §2.7 case: inside, overlapping the start, overlapping the end, covering, open-ended, single-month period, touching boundaries, disjoint, price 0, no rows, maximum price × 1 212 months without overflow | testcontainers with the same PostgreSQL major version as `compose.yaml` (17 or later), initialized with the `C` locale and UTF8 encoding (§5.2); one container per test package; clean tables per test |
+| Postgres integration tests | Repository CRUDL and not-found paths; filters; case-insensitive Cyrillic matching, including the index check (§5.2); ordering, pagination and the total; database constraints; migrations up → down → up. **Total cost** for every §2.7 case: inside, overlapping the start, overlapping the end, covering, open-ended, single-month period, touching boundaries, disjoint, price 0, no rows, maximum price × 1 212 months without overflow | testcontainers with the image from `compose.yaml` (§10.5), initialized with the `C` locale and UTF8 encoding (§5.2); one container per test package; each test creates its own database from `template0` (UTF8, `C` locale) and drops it at the end, so tests run in parallel |
 | Smoke | The composed stack starts; health, readiness and Swagger respond | CI (§10.4) |
 
 - Fakes are hand-written; there is no mock generator.
@@ -627,7 +659,7 @@ Branch names follow `type/short-description`:
 | Phase | Branch | Content | Done when |
 |---|---|---|---|
 | 0. Design | `docs/design` | This spec and `CLAUDE.md` | The spec is approved |
-| 1. Walking skeleton | `feature/walking-skeleton` | Module and layout, Makefile, linter with depguard, configuration, logging, Postgres pool, first migration, HTTP server with middleware and timeouts, `/health` and `/ready`, problem+json for router errors, graceful shutdown, Swagger generation and UI (no endpoints yet), Dockerfile, compose files, CI | From a clean clone, `docker compose up --build` starts the stack, migrations are applied, `/health` and `/ready` return 200, Swagger UI opens, CI is green |
+| 1. Walking skeleton | `feature/walking-skeleton` | Module and layout, Makefile, linter with depguard, configuration, logging, Postgres pool, first migration, HTTP server with middleware and timeouts, `/health` and `/ready`, problem+json for router errors, graceful shutdown, Swagger generation and UI (no endpoints yet), Dockerfile, compose files, CI, Dependabot | From a clean clone, `docker compose up --build` starts the stack, migrations are applied, `/health` and `/ready` return 200, Swagger UI opens, CI is green |
 | 2. Domain model | `feature/domain-model` | Value objects, aggregate, queries, ports, errors, written test-first | Domain tests pass; the domain depends only on the standard library and the UUID library |
 | 3. CRUDL | `feature/subscription-crudl` | Application service, Postgres repository, HTTP adapter with strict body decoding, Swagger annotations, delivered in slices: Create + Get, then List, Update, Delete | All five endpoints work through curl and Swagger UI; handler and repository tests pass; the smoke test now also requires at least one documented path |
 | 4. Total cost | `feature/total-cost` | The total-cost query, its use case, the endpoint with parameter validation | Integration tests pass for every §2.7 case |
@@ -638,7 +670,7 @@ Branch names follow `type/short-description`:
 - **Module path:** `github.com/sultanrasulov/subscription-service`.
 - **Versions:** Go 1.27 or later; PostgreSQL 17 or later (`pg_c_utf8`).
   - This document states only minimums.
-  - Exact versions live only in `go.mod`, the `Dockerfile` and `compose.yaml`, where dependency bots can update them without making this document stale.
+  - Each exact version lives in one file only (§10.5), where Dependabot or a single manual edit updates it without making this document stale.
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`), in English.
 
 ## 13. Revisit triggers
@@ -653,6 +685,8 @@ Branch names follow `type/short-description`:
 | Dozens of providers or several bounded contexts | Reconsider generated dependency injection (goforj/wire) |
 | `encoding/json/v2` becomes a stable part of Go | Switch request decoding to it. It rejects duplicate keys and encodes nil slices as `[]` by itself. In Go 1.27 it is still a default-on experiment, so the stable v1 package is used |
 | Deployment to Kubernetes | Point the liveness probe at `/health` and the readiness probe at `/ready` |
+| The database sits behind PgBouncer, a load balancer or failover | Make the connection lifetime, idle time and minimum connections configurable, so connections are recycled toward the current server; until then pgx's defaults apply (1 h, 30 min, 0) |
+| Dependabot starts bumping `toolchain` (dependabot-core #13520) | It would then bump `toolchain` in a `gomod` pull request and the `golang` image in a `docker` pull request, and each would fail the toolchain check (§10.2) on its own. Combine both updates in one pull request, by hand or with a Dependabot multi-ecosystem group |
 
 ## Appendix A. Decision log
 
@@ -687,13 +721,13 @@ While this document is a draft, every decision is written in its final form wher
 | 25 | Database access | Hand-written SQL on pgx v5 |
 | 26 | Collation | `pg_c_utf8` on the `service_name` column and on the filter value in queries; compose needs no initdb locale settings; tests deliberately run on a UTF8 database with the `C` locale to prove the result does not depend on the locale; a non-UTF8 database fails the first migration by design |
 | 27 | Configuration | Environment variables, supplied from env files; Go does not read `.env` itself |
-| 28 | Env files | `.env.example` committed; compose and `make run` read `.env.example`, then an optional `.env` |
+| 28 | Env files | `.env.example` committed; compose and `make run` read `.env.example`, then an optional `.env`. *(Shell precedence for `make run` added by #68.)* |
 | 29 | Router | Standard library router |
 | 30 | Swagger | Code-first swaggo, specification only (no generated Go code), not committed, embedded, Swagger 2.0, always on |
-| 31 | Logging | slog JSON, request middleware, each error logged once |
-| 32 | Versions | Minimums only: Go 1.27, PostgreSQL 17 (`pg_c_utf8`). Exact versions live only in `go.mod`, `Dockerfile` and `compose.yaml`. Alpine build image with `make`, Alpine runtime |
+| 31 | Logging | slog JSON, request middleware, each error logged once. *(Format made selectable by #65.)* |
+| 32 | Versions | Minimums only: Go 1.27, PostgreSQL 17 (`pg_c_utf8`). Exact versions live only in `go.mod`, `Dockerfile` and `compose.yaml`. Alpine build image with `make`, Alpine runtime. *(List of version files amended by #63.)* |
 | 33 | Tests | Domain unit tests, HTTP tests, testcontainers |
-| 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) |
+| 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) *(graceful stop added by #73.)* |
 | 35 | Spec | `docs/design.md`, no code: intent, rules and decisions |
 | 36 | Branches | One short-lived branch per phase, named `type/short-description` (lowercase, hyphens, no ticket ID). One pull request per phase, merged into `main` with a merge commit (no squash) when CI is green. Phase 0, which has no CI yet, merges after the spec is approved. *(Phase 0 clause amended by #62.)* |
 | 37 | Module | `github.com/sultanrasulov/subscription-service` |
@@ -709,7 +743,7 @@ While this document is a draft, every decision is written in its final form wher
 | 47 | SQL filter | Conditions only for filters that are set; one builder for list and total cost; bound parameters only |
 | 48 | Overflow | Price widened to 64 bits; total cast back to 64 bits so overflow fails loudly → 500 |
 | 49 | Configuration library | `caarlos0/env` plus a validation step; database variables named `POSTGRES_*` like the image's |
-| 50 | Compose files | `compose.yaml` with the database port unpublished; committed `compose.dev.yaml` used only by `make db` |
+| 50 | Compose files | `compose.yaml` with the database port unpublished; committed `compose.dev.yaml` used only by `make db`. *(The app's database overrides amended by #64.)* |
 | 51 | App healthcheck | On `/ready`; the smoke test waits for health |
 | 52 | Router errors | 404 and 405 from the router rewritten as problem+json, `Allow` kept |
 | 53 | Health endpoints | `/health` liveness without dependencies; `/ready` readiness with a database ping |
@@ -717,8 +751,19 @@ While this document is a draft, every decision is written in its final form wher
 | 55 | Server timeouts | All HTTP server timeouts configurable, with defaults |
 | 56 | Subscription period | The aggregate holds a `SubscriptionPeriod` value object (start, optional end, end not before start); held by value; separate from `CalculationPeriod` |
 | 57 | problem+json | One implementation in `internal/platform/problem`, used by both the HTTP server (router errors, panics) and the HTTP adapter (validation, not found, internal errors) |
-| 58 | Request deadline | Middleware gives every request context a deadline (`HTTP_REQUEST_TIMEOUT`, default 8s, shorter than the write timeout); a timeout (deadline exceeded) → 503 problem+json; a client disconnect (context cancelled) is logged at WARN with status 499, not as a 500 |
-| 59 | Integration test database | All integration tests share one database initialized with the `C` locale and UTF8 encoding; the index check disables sequential scans for its own transaction and also asserts that the row is found |
+| 58 | Request deadline | Middleware gives every request context a deadline (`HTTP_REQUEST_TIMEOUT`, default 8s, shorter than the write timeout); a timeout (deadline exceeded) → 503 problem+json; a client disconnect (context canceled) is logged at WARN with status 499, not as a 500 |
+| 59 | Integration test database | All integration tests share one database initialized with the `C` locale and UTF8 encoding; the index check disables sequential scans for its own transaction and also asserts that the row is found. *(Isolation amended by #67.)* |
 | 60 | Graceful shutdown in Docker | The binary runs in exec form and receives SIGTERM; the app's stop grace period is 15 s; config validation requires the shutdown timeout to be at least the request timeout |
 | 61 | Commit messages | Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`), in English |
 | 62 | Planning | One implementation plan per phase, written when the phase starts; it is the first commit on the phase's branch and is approved before any code |
+| 63 | Dependency updates | Dependabot, weekly, minor and patch grouped, `chore(deps)` commits; each exact version in one file (`go.mod`, `Dockerfile`, `compose.yaml`, `.golangci-lint-version`, `ci.yml`); actions pinned by commit SHA; the builder checks that its Go version equals `toolchain`; Postgres majors excluded (§10.2, §10.4, §10.5) |
+| 64 | Compose database overrides | The `app` service overrides both `POSTGRES_HOST` and `POSTGRES_PORT` to the in-network values, because `POSTGRES_PORT` also sets the host port for `make db` (§10.3). *(HTTP_ADDR added by #69.)* |
+| 65 | Log format | `LOG_FORMAT`: `json` (default) or `text`, matched exactly; JSON for compose and log collectors, text for local reading (§7, §8) |
+| 66 | Database connect timeout | `POSTGRES_CONNECT_TIMEOUT`, default 5 s, passed to pgx as a duration; bounds every new connection and the startup ping. Other pool settings keep pgx defaults until a §13 trigger |
+| 67 | Integration test isolation | One container per test package; each test creates its own database (`TEMPLATE template0`, UTF8, `C` locale) and drops it at the end; tests run in parallel |
+| 68 | `make run` precedence | Variables already set in the shell win over `.env.example` and `.env`, as with Compose interpolation and dotenv tools (§7) |
+| 69 | App listen address in compose | The `app` service fixes `HTTP_ADDR` to `:8080`, the published and health-checked port, because a developer's `.env` may move it for `make run` (§10.3) |
+| 70 | Image and port hardening | `.dockerignore` is an allow-list without tests; the runtime user has the numeric UID and GID 65532, so `runAsNonRoot` can verify it; the app's port is published on 127.0.0.1 only, because a published port bypasses the host firewall (§10.2, §10.3) |
+| 71 | App host port | `APP_PORT` (default 8080) sets the host port that compose publishes the app on, so a taken 8080 needs no edit to `compose.yaml`; compose-only, read by interpolation from the shell or `.env`; inside the container the app and its healthcheck keep 8080 (§7, §10.3) |
+| 72 | CI triggers | Pushes to `main` and pull requests to `main`, so each pull request and each merge commit runs once; a newer push cancels a pull request's older run, runs on `main` are never canceled (§10.4) |
+| 73 | Smoke graceful stop | The smoke job stops the app and requires exit 0, so an entrypoint that leaves a shell as PID 1 or a broken shutdown fails CI instead of ending in a kill after the grace period (§10.4) |

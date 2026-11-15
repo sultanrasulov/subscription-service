@@ -1,0 +1,12 @@
+# Build output
+/bin/
+
+# Local environment overrides; .env.example is the committed default
+.env
+
+# Generated Swagger specification (make swagger); the placeholder keeps the directory
+docs/swagger/*
+!docs/swagger/.gitkeep
+
+# Test and coverage output
+*.out
