@@ -4,7 +4,7 @@
 A REST service that stores users' online subscriptions and reports their total cost over a period (Effective Mobile Golang Developer test assignment).
 The approved design is `docs/design.md`. Read the relevant section before changing behavior. It is referenced, not imported, because of its size.
 Approach: Domain-Driven Design, kept small. See "Domain modeling".
-Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), Docker Compose. Each exact version lives in one file only: `go.mod`, the `Dockerfile`, `compose.yaml`, `.golangci-lint-version` or `.github/workflows/ci.yml`. Never repeat a version anywhere else, including here and in plans (design §10.5).
+Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), Docker Compose. Each exact version lives in one file only: `go.mod`, the `Dockerfile`, `compose.yaml`, `.golangci-lint-version`, `.github/workflows/ci.yml` or `.pre-commit-config.yaml`. Never repeat a version anywhere else, including here and in plans (design §10.5).
 - HTTP: the standard library `net/http` `ServeMux`, not chi, gin or echo.
 - Database: pgx v5 with hand-written SQL. No ORM, query builder or sqlc.
 - Migrations: golang-migrate, embedded with `go:embed` and applied at startup.
@@ -24,6 +24,7 @@ Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), D
 - One test: `go test ./<package> -run 'TestName/subtest' -v`.
 - One integration test: `go test ./internal/subscription/adapters/postgres -run 'TestName' -count=1 -v`. `-count=1` bypasses the test cache.
 - `make lint`, `make swagger`, `make up` / `make down` / `make logs`.
+- `make pre-commit-install` once per clone: every commit then runs `.pre-commit-config.yaml` (whitespace, YAML, `go mod tidy -diff`, `make lint`, no commit to `main`). `make pre-commit-run` checks every file. pre-commit itself is installed once per machine, for example with `pipx install pre-commit`.
 
 ## Architecture
 - `internal/subscription/domain`: the aggregate, value objects, ports and errors. Standard library and uuid only; no HTTP, JSON or SQL; never reads the clock.

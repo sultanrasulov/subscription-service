@@ -1,0 +1,46 @@
+# Fast checks on every commit, so a lint, tidy or whitespace slip is caught
+# before it is committed. The hooks are opt-in and skippable with --no-verify,
+# so CI remains the gate. Tests are left to `make test` and CI: too slow for a
+# commit.
+# Install once with `make pre-commit-install`; run on every file with
+# `make pre-commit-run`.
+
+repos:
+  # Pinned to a commit SHA; the frozen comment names its tag, and Dependabot
+  # updates both together.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Two trailing spaces are a line break in Markdown.
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+      # Every change reaches main through a pull request.
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+  # The same commands as CI, so a commit that passes here passes there.
+  - repo: local
+    hooks:
+      # Checks only: a hook that rewrote go.mod would leave the change unstaged.
+      - id: go-mod-tidy
+        name: go mod tidy -diff
+        entry: go mod tidy -diff
+        language: system
+        files: (\.go|^go\.mod|^go\.sum)$
+        pass_filenames: false
+      # make lint runs the linter at the version in .golangci-lint-version; it
+      # also covers gofmt and goimports.
+      - id: golangci-lint
+        name: make lint
+        entry: make lint
+        language: system
+        files: (\.go|^\.golangci\.yml|^\.golangci-lint-version)$
+        pass_filenames: false

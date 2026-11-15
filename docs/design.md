@@ -560,6 +560,9 @@ Make is the developer entry point. Go code still compiles without it, and the re
 | `test-unit` | Unit tests only. Integration tests skip themselves in short mode |
 | `lint` | golangci-lint |
 | `up`, `down`, `logs` | Start the compose stack and wait until it is healthy; stop it; follow its logs |
+| `pre-commit-install`, `pre-commit-run` | Install the git hook that runs the pre-commit checks on every commit; run them on every file. pre-commit itself is installed once per machine |
+
+**Pre-commit hooks** run the fast checks on every commit, so a slip is caught before it is committed: whitespace and line endings, YAML syntax, merge-conflict markers, large files, private keys, a commit straight to `main`, then `go mod tidy -diff` and `make lint`, the same commands as CI. Tests are left to `make test` and CI, because they are too slow for a commit. The hooks are a local convenience, opt-in and skippable with `--no-verify`, so CI remains the gate for lint, tidiness and tests; a reviewer who only runs `docker compose up` needs nothing.
 
 ### 10.2 Dockerfile
 
@@ -613,7 +616,8 @@ Every action is pinned to a full commit SHA, with its version in a comment. GitH
   - Go modules (`gomod`);
   - the Dockerfile images (`docker`);
   - the compose images (`docker-compose`);
-  - the GitHub Actions (`github-actions`).
+  - the GitHub Actions (`github-actions`);
+  - the pre-commit hook repositories (`pre-commit`).
 
   Minor and patch updates are grouped. The commit messages are `chore(deps): …` (#61). Each update pull request passes the same CI, including smoke, before it is merged.
 - **One version, one file.** Every exact version lives in exactly one of these files:
@@ -621,7 +625,8 @@ Every action is pinned to a full commit SHA, with its version in a comment. GitH
   - the `Dockerfile`;
   - `compose.yaml`;
   - `.golangci-lint-version`;
-  - `.github/workflows/ci.yml`.
+  - `.github/workflows/ci.yml`;
+  - `.pre-commit-config.yaml`, where each hook repository is pinned to a commit SHA with a `# frozen:` comment naming its tag, which Dependabot updates together.
 
   Nothing else repeats it: not documents, plans, Makefiles or Go constants. Documents name the file, never the version. The integration tests read the database image from `compose.yaml`, and the Makefile and CI read the linter version from `.golangci-lint-version`.
 - **Updated by hand:**
@@ -756,7 +761,7 @@ While this document is a draft, every decision is written in its final form wher
 | 60 | Graceful shutdown in Docker | The binary runs in exec form and receives SIGTERM; the app's stop grace period is 15 s; config validation requires the shutdown timeout to be at least the request timeout |
 | 61 | Commit messages | Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`), in English |
 | 62 | Planning | One implementation plan per phase, written when the phase starts; it is the first commit on the phase's branch and is approved before any code |
-| 63 | Dependency updates | Dependabot, weekly, minor and patch grouped, `chore(deps)` commits; each exact version in one file (`go.mod`, `Dockerfile`, `compose.yaml`, `.golangci-lint-version`, `ci.yml`); actions pinned by commit SHA; the builder checks that its Go version equals `toolchain`; Postgres majors excluded (§10.2, §10.4, §10.5) |
+| 63 | Dependency updates | Dependabot, weekly, minor and patch grouped, `chore(deps)` commits; each exact version in one file (`go.mod`, `Dockerfile`, `compose.yaml`, `.golangci-lint-version`, `ci.yml`); actions pinned by commit SHA; the builder checks that its Go version equals `toolchain`; Postgres majors excluded (§10.2, §10.4, §10.5) *(`.pre-commit-config.yaml` added by #74.)* |
 | 64 | Compose database overrides | The `app` service overrides both `POSTGRES_HOST` and `POSTGRES_PORT` to the in-network values, because `POSTGRES_PORT` also sets the host port for `make db` (§10.3). *(HTTP_ADDR added by #69.)* |
 | 65 | Log format | `LOG_FORMAT`: `json` (default) or `text`, matched exactly; JSON for compose and log collectors, text for local reading (§7, §8) |
 | 66 | Database connect timeout | `POSTGRES_CONNECT_TIMEOUT`, default 5 s, passed to pgx as a duration; bounds every new connection and the startup ping. Other pool settings keep pgx defaults until a §13 trigger |
@@ -767,3 +772,4 @@ While this document is a draft, every decision is written in its final form wher
 | 71 | App host port | `APP_PORT` (default 8080) sets the host port that compose publishes the app on, so a taken 8080 needs no edit to `compose.yaml`; compose-only, read by interpolation from the shell or `.env`; inside the container the app and its healthcheck keep 8080 (§7, §10.3) |
 | 72 | CI triggers | Pushes to `main` and pull requests to `main`, so each pull request and each merge commit runs once; a newer push cancels a pull request's older run, runs on `main` are never canceled (§10.4) |
 | 73 | Smoke graceful stop | The smoke job stops the app and requires exit 0, so an entrypoint that leaves a shell as PID 1 or a broken shutdown fails CI instead of ending in a kill after the grace period (§10.4) |
+| 74 | Pre-commit hooks | Opt-in pre-commit hooks: the standard whitespace, YAML, conflict, large-file, private-key and no-commit-to-`main` checks, then `go mod tidy -diff` and `make lint`; no tests. Hook repositories pinned by SHA with a frozen comment and updated by Dependabot. A local convenience; CI remains the gate (§10.1, §10.5) |
