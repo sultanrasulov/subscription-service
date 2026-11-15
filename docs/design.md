@@ -566,7 +566,7 @@ Make is the developer entry point. Go code still compiles without it, and the re
 - **Builder stage:** the Go Alpine image matching `go.mod`, plus `make`, which the image does not include. It builds through `make build`, with cache mounts for the module and build caches, so only the modules the build needs are downloaded and both caches persist between builds. If Swagger generation fails, the image build fails, so a missing specification cannot slip through.
 - **Runtime stage:** Alpine, a non-root user with the fixed numeric UID and GID 65532, and the single static binary, owned by root. Migrations and the Swagger specification are inside the binary. It exposes port 8080. BusyBox `wget` in the image serves the healthcheck.
 - **Build context:** `.dockerignore` is an allow-list. Only the files the build reads enter the context, without tests, so a stray file in the working tree (a `.env`, a dump, a stale specification) cannot reach the image.
-- **Signals:** the binary is started in exec form, so it is the container's main process and receives SIGTERM directly. A shell-form command would wrap it in `/bin/sh -c`, which does not forward the signal, and graceful shutdown would never run.
+- **Signals:** the binary is started in exec form, so it is the container's main process and receives SIGTERM directly. A shell-form command may leave `/bin/sh` as PID 1, which does not forward the signal, so graceful shutdown would never run. Some shells, Alpine's among them, replace themselves with the last command; the exec form does not depend on that.
 - **Toolchain check:** the builder fails unless its Go version equals the `toolchain` line in `go.mod`.
   - `GOTOOLCHAIN=local` alone is not enough: it ignores the `toolchain` line and checks only the `go` line (verified).
   - Dependabot does not bump `toolchain` (dependabot-core #13520). A Dependabot pull request for a new `golang` image therefore fails until the same pull request updates `toolchain`, so the drift is visible instead of silent (§10.5).
@@ -597,13 +597,13 @@ Make is the developer entry point. Go code still compiles without it, and the re
 
 ### 10.4 CI (GitHub Actions)
 
-The workflow runs on every push and on pull requests to `main`.
+The workflow runs on pushes to `main` and on pull requests to `main`, so every pull request and every merge commit is checked once. Running on every push as well would check a branch with an open pull request twice, because the two events have different refs. A newer push to a pull request cancels its older run; runs on `main` are never canceled, so every merge commit gets a full result.
 
 | Job | Purpose |
 |---|---|
 | lint | golangci-lint at the version in `.golangci-lint-version`. It must be built with a Go version ≥ the module's `go` directive, so a Go update moves this pin too |
 | test | All tests, including integration tests on the runner's Docker |
-| smoke | Start the compose stack and wait until it is healthy. Check that `/health` and `/ready` return 200 and that `/swagger/doc.json` is a Swagger 2.0 document. From phase 3, also require at least one documented path. Phase 1 has no endpoints yet, and `/health` and `/ready` are not in Swagger, so that check would fail there. Print the logs on failure; tear down |
+| smoke | Start the compose stack and wait until it is healthy. Check that `/health` and `/ready` return 200 and that `/swagger/doc.json` is a Swagger 2.0 document. From phase 3, also require at least one documented path. Phase 1 has no endpoints yet, and `/health` and `/ready` are not in Swagger, so that check would fail there. Stop the app and require exit 0: an entrypoint that leaves a shell as PID 1 does not forward SIGTERM, so Docker kills the app with 137, and a broken shutdown exits non-zero. Print the logs on failure; tear down |
 
 Every action is pinned to a full commit SHA, with its version in a comment. GitHub's security hardening guide names the full SHA as the only immutable reference to an action, and Dependabot updates both the SHA and the comment.
 
@@ -727,7 +727,7 @@ While this document is a draft, every decision is written in its final form wher
 | 31 | Logging | slog JSON, request middleware, each error logged once. *(Format made selectable by #65.)* |
 | 32 | Versions | Minimums only: Go 1.27, PostgreSQL 17 (`pg_c_utf8`). Exact versions live only in `go.mod`, `Dockerfile` and `compose.yaml`. Alpine build image with `make`, Alpine runtime. *(List of version files amended by #63.)* |
 | 33 | Tests | Domain unit tests, HTTP tests, testcontainers |
-| 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) |
+| 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) *(graceful stop added by #73.)* |
 | 35 | Spec | `docs/design.md`, no code: intent, rules and decisions |
 | 36 | Branches | One short-lived branch per phase, named `type/short-description` (lowercase, hyphens, no ticket ID). One pull request per phase, merged into `main` with a merge commit (no squash) when CI is green. Phase 0, which has no CI yet, merges after the spec is approved. *(Phase 0 clause amended by #62.)* |
 | 37 | Module | `github.com/sultanrasulov/subscription-service` |
@@ -765,3 +765,5 @@ While this document is a draft, every decision is written in its final form wher
 | 69 | App listen address in compose | The `app` service fixes `HTTP_ADDR` to `:8080`, the published and health-checked port, because a developer's `.env` may move it for `make run` (§10.3) |
 | 70 | Image and port hardening | `.dockerignore` is an allow-list without tests; the runtime user has the numeric UID and GID 65532, so `runAsNonRoot` can verify it; the app's port is published on 127.0.0.1 only, because a published port bypasses the host firewall (§10.2, §10.3) |
 | 71 | App host port | `APP_PORT` (default 8080) sets the host port that compose publishes the app on, so a taken 8080 needs no edit to `compose.yaml`; compose-only, read by interpolation from the shell or `.env`; inside the container the app and its healthcheck keep 8080 (§7, §10.3) |
+| 72 | CI triggers | Pushes to `main` and pull requests to `main`, so each pull request and each merge commit runs once; a newer push cancels a pull request's older run, runs on `main` are never canceled (§10.4) |
+| 73 | Smoke graceful stop | The smoke job stops the app and requires exit 0, so an entrypoint that leaves a shell as PID 1 or a broken shutdown fails CI instead of ending in a kill after the grace period (§10.4) |

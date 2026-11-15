@@ -17,7 +17,6 @@ Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), D
 - Dependency injection: manual wiring in `cmd/subscription-service`. No Wire and no DI framework.
 
 ## Commands
-These targets are available from phase 1, when the Makefile is added (design §10.1).
 - `docker compose up --build`: the full stack, as a reviewer runs it.
 - `make db`, then `make run`: Postgres in Docker, the service on the host.
 - `make test`: all tests with `-race`. Integration tests need Docker running.

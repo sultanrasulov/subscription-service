@@ -1,0 +1,86 @@
+name: CI
+
+# Every pull request and every commit on main, once each. Running on every push
+# as well would check a branch with an open pull request twice: push and
+# pull_request events have different refs, so neither cancels the other.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Read-only: no job writes to the repository.
+permissions:
+  contents: read
+
+# A newer push to a pull request makes its older run pointless. Runs on main are
+# never canceled, so every merge commit gets a full result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Every action is pinned to a full commit SHA, the only immutable reference to
+# it; Dependabot updates the SHA and the version comment together.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # The same file the Makefile reads, so local and CI lint agree.
+          version-file: .golangci-lint-version
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # setup-go uses the toolchain line, so tests run on the Dockerfile's Go.
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+      # Integration tests start Postgres on the runner's Docker.
+      - run: make test
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start the stack
+        run: docker compose up --build --wait --wait-timeout 180
+      - name: Check the operational routes
+        run: |
+          curl -fsS http://127.0.0.1:8080/health
+          curl -fsS http://127.0.0.1:8080/ready
+          curl -fsS http://127.0.0.1:8080/swagger/doc.json | jq -e '.swagger == "2.0"'
+          curl -fsS -o /dev/null http://127.0.0.1:8080/swagger/index.html
+      # SIGTERM must reach the binary and end in a graceful shutdown. An entrypoint
+      # that leaves a shell as PID 1, such as a wrapper script without exec, does
+      # not forward the signal, and Docker kills the app with 137 after the grace
+      # period; a broken shutdown exits non-zero.
+      - name: Stop the app gracefully
+        run: |
+          docker compose stop app
+          test "$(docker inspect -f '{{.State.ExitCode}}' "$(docker compose ps -aq app)")" = 0
+      - name: Logs
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes

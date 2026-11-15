@@ -39,6 +39,7 @@ COPY --from=build /src/bin/subscription-service /usr/local/bin/subscription-serv
 USER 65532:65532
 EXPOSE 8080
 
-# Exec form: the binary is PID 1 and receives SIGTERM itself. A shell form
-# would wrap it in /bin/sh -c, which does not forward the signal.
+# Exec form: the binary is PID 1 and receives SIGTERM itself. A shell form may
+# leave /bin/sh as PID 1, which does not forward the signal; whether it does
+# depends on the shell, so the exec form does not rely on it.
 ENTRYPOINT ["/usr/local/bin/subscription-service"]

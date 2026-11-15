@@ -450,7 +450,7 @@ Commit: `feat: add Dockerfile and full compose stack`
 **Known pitfalls (verified):**
 - The Go Alpine image has no `make`.
 - `GOTOOLCHAIN=local` ignores the `toolchain` line: a newer `toolchain` still builds, and only a newer `go` line fails. Dependabot does not bump `toolchain` (dependabot-core #13520). Without the explicit check, an image update would leave `toolchain` behind silently.
-- A shell-form entrypoint swallows SIGTERM.
+- A shell-form entrypoint can leave `sh` as PID 1, which swallows SIGTERM (see Task 11 for when Alpine's `sh` does and does not).
 - To check from a clean tree before the user commits, copy exactly what a commit would hold: `git ls-files -co --exclude-standard` (tracked and new files, without ignored ones such as `.env`, `bin/` or a generated spec).
 - On a machine where 8080 is taken, `APP_PORT=18080` moves the host port without editing `compose.yaml`. A separate project name (`-p`) keeps the check apart from a running stack.
 - `APP_PORT` in `.env.example` would have no effect: Compose interpolation reads only the shell and `.env`, never `env_file`. It is listed there as a comment.
@@ -464,15 +464,15 @@ Commit: `feat: add Dockerfile and full compose stack`
 ### Task 11: CI and Dependabot
 Commit: `chore: add CI workflow and Dependabot`
 
-**Goal:** every push and pull request is checked automatically, and dependencies stay current without stale copies (design §10.4–§10.5).
+**Goal:** every pull request and every commit on `main` is checked automatically, and dependencies stay current without stale copies (design §10.4–§10.5).
 
 **Scope:** `.github/workflows/ci.yml`, `.github/dependabot.yml`, `CLAUDE.md` (the "available from phase 1" note only).
 
 **Rules:**
-- CI runs on push and on pull requests to `main`, with read-only permissions. Jobs:
+- CI runs on pushes to `main` and on pull requests to `main`, with read-only permissions (design #72). A newer push cancels a pull request's older run; runs on `main` are never canceled. Jobs:
   - `lint`: the official golangci-lint action, reading `.golangci-lint-version`;
   - `test`: `go mod tidy -diff` must be clean, then `make test`, with the Go version taken from `go.mod`;
-  - `smoke`: compose up, then health, readiness, Swagger 2.0 and the UI; logs on failure; always tear down.
+  - `smoke`: compose up, then health, readiness, Swagger 2.0 and the UI; then stop the app and require exit 0 (design #73); logs on failure; always tear down.
 - Every action, `actions/*` included, is pinned to a full commit SHA, with its version in a comment (design §10.4).
 - Dependabot follows design §10.5:
   - weekly updates for `gomod`, `docker`, `docker-compose` and `github-actions`;
@@ -490,3 +490,10 @@ Commit: `chore: add CI workflow and Dependabot`
 - golangci-lint-action looks for the version in its `version` input, then in `go.mod`, then in `version-file`, and accepts `.golangci-lint-version`.
 - Dependabot supports the `gomod`, `docker`, `docker-compose` and `github-actions` ecosystems.
 - Without an explicit `commit-message`, Dependabot picks a prefix from the repository history, which may not be one of the #61 types.
+- setup-go reads the `toolchain` line of `go.mod` when it is present, and the `go` line otherwise, so CI tests on the same Go as the `Dockerfile` (its README at the pinned commit). It keys the module cache on `go.mod` unless `cache-dependency-path` names `go.sum`.
+- golangci-lint-action's default `binary` mode downloads the release binary instead of building it. The pinned linter release is built with a Go version equal to the `go` line (checked with `go version` on the binary); a later `go` line bump must check this again (design §10.4).
+- An action's SHA is resolved from its release tag; an annotated tag points to a tag object, which must be dereferenced to the commit.
+- With `push` on every branch, a branch with an open pull request runs twice: the `push` event has the ref `refs/heads/…`, `pull_request` has `refs/pull/N/merge`, so they fall into different concurrency groups.
+- Actions expands only `${{ … }}`; a Go template such as `{{.State.ExitCode}}` reaches `docker inspect` unchanged.
+- Alpine's `sh` replaces itself with the last command of `sh -c`. A shell-form `ENTRYPOINT` with only the binary, or `echo … && binary`, still makes the binary PID 1, and the stop step passes. A command after the binary (`binary; echo stopped`) keeps `sh` as PID 1: verified, the step fails with 137 after 16 s and the app never logs "shutting down". The exec form stays, because it does not depend on that shell behavior.
+- Verified locally: `go mod tidy -diff` clean, `make lint` and `make test` pass, and the smoke steps, run as written in the workflow, bring the stack up healthy and tear it down.
