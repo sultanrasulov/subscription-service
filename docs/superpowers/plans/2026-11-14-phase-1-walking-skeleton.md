@@ -430,14 +430,15 @@ Commit: `feat: add Dockerfile and full compose stack`
 - Builder stage:
   - the Go Alpine image plus `make`, with `GOTOOLCHAIN=local`;
   - before building, it fails unless its Go version equals the `toolchain` line in `go.mod`, using a one-line check against `go env GOVERSION` (design §10.2);
-  - it builds through `make build`, so it also generates the spec.
-- Runtime stage: Alpine, a non-root user, and an exec-form entrypoint.
-- The Docker context excludes stale generated specs and the plans.
+  - it builds through `make build`, so it also generates the spec, with cache mounts for the module and build caches instead of a separate `go mod download` layer.
+- Runtime stage: Alpine, a non-root user with the numeric UID and GID 65532, a root-owned binary, and an exec-form entrypoint (design #70).
+- The Docker context is an allow-list of what the build reads, without tests (design §10.2, #70).
 - The app:
   - starts after the database is healthy;
   - has a healthcheck on `/ready`;
+  - publishes on 127.0.0.1 only, on the host at `APP_PORT`, 8080 by default (design #70, #71);
   - has a 15 s stop grace period;
-  - overrides both `POSTGRES_HOST` and `POSTGRES_PORT` to the in-network values (design §10.3, #64).
+  - overrides `POSTGRES_HOST`, `POSTGRES_PORT` and `HTTP_ADDR` to the in-network values (design §10.3, #64, #69). Each also has a host role for `make db` or `make run`, and a developer's `.env` may change it.
 
 **Done when**, from a fresh clone in a temporary directory, without `.env`:
 - [ ] the stack comes up healthy;
@@ -450,6 +451,15 @@ Commit: `feat: add Dockerfile and full compose stack`
 - The Go Alpine image has no `make`.
 - `GOTOOLCHAIN=local` ignores the `toolchain` line: a newer `toolchain` still builds, and only a newer `go` line fails. Dependabot does not bump `toolchain` (dependabot-core #13520). Without the explicit check, an image update would leave `toolchain` behind silently.
 - A shell-form entrypoint swallows SIGTERM.
+- To check from a clean tree before the user commits, copy exactly what a commit would hold: `git ls-files -co --exclude-standard` (tracked and new files, without ignored ones such as `.env`, `bin/` or a generated spec).
+- On a machine where 8080 is taken, `APP_PORT=18080` moves the host port without editing `compose.yaml`. A separate project name (`-p`) keeps the check apart from a running stack.
+- `APP_PORT` in `.env.example` would have no effect: Compose interpolation reads only the shell and `.env`, never `env_file`. It is listed there as a comment.
+- A plain `go mod download` fetched every module in `go.mod`, test-only ones included (testcontainers and its dependencies, about 79 MB); the first build took about 8 minutes on a slow network. Cache mounts fetch only what the build needs (about 19 MB) and keep the module and build caches between builds; a `--no-cache` build then took 101 s here (the cache mounts may already have held some modules, so this is not a from-zero figure).
+- `HTTP_ADDR` has the same two roles as `POSTGRES_PORT`. With `HTTP_ADDR=:9090` in a developer's `.env` and no override, the app listened on 9090 while 8080 was published and health-checked, so it never became healthy. The override fixes it to `:8080` (verified: with that `.env`, the app listened on 8080 and became healthy).
+- In `.dockerignore`, a pattern without `**/` matches only at the context's root: `*.md` would have kept the plans in. The allow-list avoids the question; inside the admitted directories, `**/*_test.go` is needed at any depth.
+- The Makefile reads `.golangci-lint-version` when parsed, so the allow-list admits it; without it, the build log shows `cat: .golangci-lint-version: No such file`.
+- swag creates `docs/swagger` itself, so the allow-list admits only `docs/embed.go`.
+- Verified from a clean copy: both services healthy, every route as specified, `migrations applied` from 0 to 1, the app running as `app` (UID and GID 65532) with a root-owned binary it cannot overwrite (`touch`: Permission denied) and an exec-form entrypoint, a 35 MB image, `docker compose stop app` exiting 0 in about 0.5 s with the shutdown lines, and a deliberately wrong `toolchain` failing the build at the check.
 
 ### Task 11: CI and Dependabot
 Commit: `chore: add CI workflow and Dependabot`

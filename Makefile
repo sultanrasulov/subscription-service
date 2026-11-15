@@ -9,7 +9,7 @@ GOLANGCI_LINT := bin/golangci-lint-$(GOLANGCI_LINT_VERSION)
 # swag fails on a directory that does not exist yet; phase 3 adds the HTTP adapter.
 SWAG_DIRS := ./cmd/subscription-service
 
-.PHONY: help swagger build db run test test-unit lint
+.PHONY: help swagger build db run up down logs test test-unit lint
 
 help: ## List the targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -28,6 +28,15 @@ db: ## Start only Postgres, published on 127.0.0.1 (compose.dev.yaml)
 # and the saved ones are restored.
 run: swagger ## Run the service on the host: .env.example, then an optional .env; the shell wins
 	saved=$$(export -p) && set -a && . ./.env.example && if [ -f .env ]; then . ./.env; fi && set +a && eval "$$saved" && go run ./cmd/subscription-service
+
+up: ## Build and start the whole stack, then wait until it is healthy
+	docker compose up -d --build --wait
+
+down: ## Stop the stack
+	docker compose down
+
+logs: ## Follow the stack's logs
+	docker compose logs -f
 
 test: ## Run all tests with the race detector (integration tests need Docker)
 	go test -race ./...

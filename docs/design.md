@@ -38,7 +38,7 @@ The assignment also says:
 ### 1.2 Success criteria
 
 - From a clean clone, `docker compose up --build` starts the service and its database with no other steps.
-- The service is reachable on `http://localhost:8080`, and Swagger UI on `http://localhost:8080/swagger/index.html`.
+- The service is reachable on `http://localhost:8080`, and Swagger UI on `http://localhost:8080/swagger/index.html`. If 8080 is taken, `APP_PORT` moves the host port (§10.3).
 - All six endpoints behave as specified in §4, including every documented error case.
 - CI is green: lint, unit tests, integration tests, and a smoke test against the composed stack.
 
@@ -512,6 +512,8 @@ One application service, with one method per use case. It depends on the two dom
 
 Compose interpolation (`${VAR}` in a compose file) reads only the shell and `.env`, not `env_file`. Sharing the image's variable names is what lets a clean clone start without copying `.env.example` to `.env`. The app's other `POSTGRES_*` names are not variables the image interprets.
 
+`APP_PORT` (default 8080) is a compose-only variable: the host port that `docker compose up` publishes the app on. The service does not read it. Interpolation reads it from the shell or `.env`, for example `APP_PORT=18080 docker compose up`, so `.env.example` lists it only as a comment.
+
 The connection string is built so that passwords containing reserved URL characters work.
 
 ## 8. Logging
@@ -561,8 +563,9 @@ Make is the developer entry point. Go code still compiles without it, and the re
 
 ### 10.2 Dockerfile
 
-- **Builder stage:** the Go Alpine image matching `go.mod`, plus `make`, which the image does not include. It downloads modules, then builds through `make build`. If Swagger generation fails, the image build fails, so a missing specification cannot slip through.
-- **Runtime stage:** Alpine, a non-root user, and the single static binary. Migrations and the Swagger specification are inside the binary. It exposes port 8080. BusyBox `wget` in the image serves the healthcheck.
+- **Builder stage:** the Go Alpine image matching `go.mod`, plus `make`, which the image does not include. It builds through `make build`, with cache mounts for the module and build caches, so only the modules the build needs are downloaded and both caches persist between builds. If Swagger generation fails, the image build fails, so a missing specification cannot slip through.
+- **Runtime stage:** Alpine, a non-root user with the fixed numeric UID and GID 65532, and the single static binary, owned by root. Migrations and the Swagger specification are inside the binary. It exposes port 8080. BusyBox `wget` in the image serves the healthcheck.
+- **Build context:** `.dockerignore` is an allow-list. Only the files the build reads enter the context, without tests, so a stray file in the working tree (a `.env`, a dump, a stale specification) cannot reach the image.
 - **Signals:** the binary is started in exec form, so it is the container's main process and receives SIGTERM directly. A shell-form command would wrap it in `/bin/sh -c`, which does not forward the signal, and graceful shutdown would never run.
 - **Toolchain check:** the builder fails unless its Go version equals the `toolchain` line in `go.mod`.
   - `GOTOOLCHAIN=local` alone is not enough: it ignores the `toolchain` line and checks only the `go` line (verified).
@@ -580,11 +583,12 @@ Make is the developer entry point. Go code still compiles without it, and the re
   - port **not published**, so a reviewer with a local Postgres on 5432 cannot hit "port is already allocated".
 - **`app`:**
   - built from the Dockerfile;
-  - the shared env files, with `POSTGRES_HOST` and `POSTGRES_PORT` overridden to the database service and its in-network port 5432. `POSTGRES_PORT` has two roles: the host port that `make db` publishes, and the port inside the compose network. A developer's `.env` may change the first, and the override keeps the second;
+  - the shared env files, with `POSTGRES_HOST` and `POSTGRES_PORT` overridden to the database service and its in-network port 5432. `POSTGRES_PORT` has two roles: the host port that `make db` publishes, and the port inside the compose network. A developer's `.env` may change the first, and the override keeps the second. `HTTP_ADDR` has the same two roles (the host address for `make run`, the in-container address), so the `app` service also fixes it to `:8080`, the port that is published and health-checked;
   - starts only after the database is healthy;
-  - publishes 8080;
+  - publishes its port on the loopback interface only, on the host at `APP_PORT` (8080 by default), so a taken 8080 needs no edit to `compose.yaml`. Inside the container it stays 8080, which the healthcheck uses;
   - has a healthcheck on `/ready`;
   - has a stop grace period of 15 s. `docker compose stop` sends SIGTERM and kills the container after the grace period, which is 10 s by default. The grace period must cover the 10 s shutdown timeout plus closing the pool.
+- **Network:** both services share Compose's default network, `<project>_default`, so stacks started with different `-p` never share one. No `network_mode: host`: it would put the database port on the host, break service names and ignore the loopback binding (#70).
 
 `compose.dev.yaml` is a committed development overlay:
 - It publishes the database port on `127.0.0.1` at `POSTGRES_PORT`.
@@ -753,8 +757,11 @@ While this document is a draft, every decision is written in its final form wher
 | 61 | Commit messages | Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`), in English |
 | 62 | Planning | One implementation plan per phase, written when the phase starts; it is the first commit on the phase's branch and is approved before any code |
 | 63 | Dependency updates | Dependabot, weekly, minor and patch grouped, `chore(deps)` commits; each exact version in one file (`go.mod`, `Dockerfile`, `compose.yaml`, `.golangci-lint-version`, `ci.yml`); actions pinned by commit SHA; the builder checks that its Go version equals `toolchain`; Postgres majors excluded (§10.2, §10.4, §10.5) |
-| 64 | Compose database overrides | The `app` service overrides both `POSTGRES_HOST` and `POSTGRES_PORT` to the in-network values, because `POSTGRES_PORT` also sets the host port for `make db` (§10.3) |
+| 64 | Compose database overrides | The `app` service overrides both `POSTGRES_HOST` and `POSTGRES_PORT` to the in-network values, because `POSTGRES_PORT` also sets the host port for `make db` (§10.3). *(HTTP_ADDR added by #69.)* |
 | 65 | Log format | `LOG_FORMAT`: `json` (default) or `text`, matched exactly; JSON for compose and log collectors, text for local reading (§7, §8) |
 | 66 | Database connect timeout | `POSTGRES_CONNECT_TIMEOUT`, default 5 s, passed to pgx as a duration; bounds every new connection and the startup ping. Other pool settings keep pgx defaults until a §13 trigger |
 | 67 | Integration test isolation | One container per test package; each test creates its own database (`TEMPLATE template0`, UTF8, `C` locale) and drops it at the end; tests run in parallel |
 | 68 | `make run` precedence | Variables already set in the shell win over `.env.example` and `.env`, as with Compose interpolation and dotenv tools (§7) |
+| 69 | App listen address in compose | The `app` service fixes `HTTP_ADDR` to `:8080`, the published and health-checked port, because a developer's `.env` may move it for `make run` (§10.3) |
+| 70 | Image and port hardening | `.dockerignore` is an allow-list without tests; the runtime user has the numeric UID and GID 65532, so `runAsNonRoot` can verify it; the app's port is published on 127.0.0.1 only, because a published port bypasses the host firewall (§10.2, §10.3) |
+| 71 | App host port | `APP_PORT` (default 8080) sets the host port that compose publishes the app on, so a taken 8080 needs no edit to `compose.yaml`; compose-only, read by interpolation from the shell or `.env`; inside the container the app and its healthcheck keep 8080 (§7, §10.3) |

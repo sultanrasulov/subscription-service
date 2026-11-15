@@ -57,7 +57,7 @@ Dependencies flow `httpapi → application → domain ← postgres`. Adapters ma
 - Logging: each error is logged once, at the HTTP boundary. The application layer returns errors and logs only business events. Always use the slog `*Context` methods, so `request_id` is attached. Never log secrets.
 - Money: whole rubles as integers, never floats.
 - Months: `MonthYear` in the domain, stored as a date on the 1st of the month, sent as `MM-YYYY` in the API.
-- A new environment variable goes into the config struct (with validation) and into `.env.example` in the same change.
+- A new environment variable goes into the config struct (with validation) and into `.env.example` in the same change. A compose-only variable, such as `APP_PORT`, is read by interpolation from the shell or `.env`, so it goes into `.env.example` as a commented line only.
 
 ## API
 - REST + JSON under `/api/v1`. Errors are RFC 9457 problem+json.

@@ -1,0 +1,19 @@
+# Allow-list: only what the build reads enters the context (design §10.2, #70).
+# Anything else that lands in the working tree, such as a .env, a dump or a
+# stale generated specification, stays out without an entry of its own; a file
+# the build needs and this list omits fails the build loudly.
+*
+!go.mod
+!go.sum
+!Makefile
+# The Makefile reads it when parsed, so make prints an error without it.
+!.golangci-lint-version
+!cmd/
+!internal/
+!migrations/
+# Only the embed file: the image generates its own specification.
+!docs/embed.go
+
+# Tests are not built; leaving them out also keeps a test edit from
+# invalidating the build cache.
+**/*_test.go
