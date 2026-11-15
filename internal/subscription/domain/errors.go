@@ -42,4 +42,6 @@ var (
 	// ErrInvertedCalculationPeriod reports a calculation period whose last
 	// month is before its first.
 	ErrInvertedCalculationPeriod = fmt.Errorf("%w: calculation period must not end before it starts", ErrInvalid)
+	// ErrNilSubscriptionID reports the nil UUID as a subscription ID.
+	ErrNilSubscriptionID = fmt.Errorf("%w: subscription ID must not be the nil UUID", ErrInvalid)
 )
