@@ -18,6 +18,8 @@ var validationErrors = map[string]error{
 	"ErrEmptyServiceName":             domain.ErrEmptyServiceName,
 	"ErrServiceNameInvalidCharacters": domain.ErrServiceNameInvalidCharacters,
 	"ErrServiceNameTooLong":           domain.ErrServiceNameTooLong,
+	"ErrEndBeforeStart":               domain.ErrEndBeforeStart,
+	"ErrInvertedCalculationPeriod":    domain.ErrInvertedCalculationPeriod,
 }
 
 func TestValidationErrors_AreInvalid(t *testing.T) {

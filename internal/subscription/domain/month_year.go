@@ -48,3 +48,7 @@ func (m MonthYear) Before(other MonthYear) bool {
 	}
 	return m.month < other.month
 }
+
+// isZero reports whether m is the zero value. It is the only invalid MonthYear
+// a caller can hold, because NewMonthYear never returns one.
+func (m MonthYear) isZero() bool { return m == MonthYear{} }

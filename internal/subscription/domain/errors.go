@@ -36,4 +36,10 @@ var (
 	// ErrServiceNameTooLong reports a service name longer than
 	// MaxServiceNameLength characters.
 	ErrServiceNameTooLong = fmt.Errorf("%w: service name must be at most %d characters", ErrInvalid, MaxServiceNameLength)
+	// ErrEndBeforeStart reports a subscription period that ends before it
+	// starts.
+	ErrEndBeforeStart = fmt.Errorf("%w: end month must not be before the start month", ErrInvalid)
+	// ErrInvertedCalculationPeriod reports a calculation period whose last
+	// month is before its first.
+	ErrInvertedCalculationPeriod = fmt.Errorf("%w: calculation period must not end before it starts", ErrInvalid)
 )
