@@ -77,7 +77,7 @@ Value objects are immutable, and their fields are not accessible from outside th
 | Value object | Rules | Behavior |
 |---|---|---|
 | `MonthYear` | month 1–12; year 2000–2100 | Ordered comparison. The domain never reads the clock |
-| `ServiceName` | Trims the input and collapses internal whitespace to single spaces. The result must be 1–100 characters (Unicode runes). Case is preserved | Matching is case-insensitive and happens in the store (§5.4) |
+| `ServiceName` | Trims the input and collapses internal whitespace to single spaces. The result must be 1–100 characters (Unicode runes), valid UTF-8, with no control characters. Case is preserved | Matching is case-insensitive and happens in the store (§5.4) |
 | `Price` | Whole rubles, 0 to 2 147 483 647 (the Postgres `INTEGER` maximum) | Exposes the amount; no arithmetic |
 | `UserID` | A UUID that is not the nil UUID | The same rule applies to the request body and to the filter, so it lives in one place. It also keeps a user ID from being passed where a subscription ID is expected |
 | `SubscriptionPeriod` | A start month, an optional end month, and end not before start | Held entirely by value, with no pointers, so nobody can change it after validation, and two periods compare equal by value. Read-only accessors: the start, and the end as "present or absent". No methods depend on the current date |
@@ -93,6 +93,12 @@ Why the year range is 2000–2100:
 - It caps the months per record at 1 212, which bounds the total (§5.4).
 
 The range is a business assumption: online subscriptions do not predate 2000. Widening it changes one domain constant and the matching database constraint.
+
+Why the service name rejects control characters and invalid UTF-8:
+- Postgres rejects a NUL character and invalid UTF-8 in text with an error (`invalid byte sequence for encoding "UTF8"`). Without the rule, such input would reach the database and fail as a 500 instead of a 400.
+- Both can arrive: JSON allows `\u0000`, and a query parameter can carry any byte (`%FF`).
+- Other control characters, such as ESC, are stored silently and would end up in responses and logs.
+- The check runs after normalization, so tabs and newlines have already become single spaces and stay valid.
 
 ### 2.3 Aggregate: `Subscription`
 
@@ -138,7 +144,7 @@ The domain defines two error categories:
 - **not found** → HTTP 404;
 - **invalid data** → HTTP 400.
 
-Each specific validation failure belongs to the "invalid data" category and has its own identity. Examples: year out of range, invalid month, empty or too-long service name, price out of range, nil user ID, end before start, inverted calculation period. The HTTP adapter can therefore treat them all as 400 and still turn each one into a field-level message. For example, "end before start" is reported on `end_date`.
+Each specific validation failure belongs to the "invalid data" category and has its own identity. Examples: year out of range, invalid month, empty or too-long service name, invalid characters in the service name, price out of range, nil user ID, end before start, inverted calculation period. The HTTP adapter can therefore treat them all as 400 and still turn each one into a field-level message. For example, "end before start" is reported on `end_date`.
 
 ### 2.7 Total-cost rule
 
@@ -325,7 +331,7 @@ The null rule also needs explanation. In `encoding/json`, a JSON `null` decoded 
 
 | Field | Required | Rule | Example message |
 |---|---|---|---|
-| `service_name` | yes | string; normalized, 1–100 characters | `must not be empty` |
+| `service_name` | yes | string; normalized, 1–100 characters, valid UTF-8 without control characters | `must not be empty`, `must not contain control characters or invalid UTF-8` |
 | `price` | yes | JSON integer, 0…2147483647; `0` is valid | `must be an integer between 0 and 2147483647` |
 | `user_id` | yes (create only) | UUID, not the nil UUID | `must be a valid UUID` |
 | `start_date` | yes | `MM-YYYY`, month 01–12, year 2000–2100 | `must be in MM-YYYY format` |
@@ -407,7 +413,7 @@ The standard router answers unmatched routes and wrong methods in plain text. A 
 |---|---|---|---|
 | `id` | UUID | no | Primary key. No database default: the application is the only source of IDs, so a missing ID fails loudly |
 | `user_id` | UUID | no | |
-| `service_name` | text, collation `pg_c_utf8` | no | 1–100 characters (§5.2) |
+| `service_name` | text, collation `pg_c_utf8` | no | 1–100 characters (§5.2); no control characters (§2.2) |
 | `price` | integer | no | ≥ 0 |
 | `start_date` | date | no | The 1st of a month, within 2000-01 … 2100-12 |
 | `end_date` | date | yes | Same rule as `start_date`; not before `start_date` |
@@ -638,7 +644,7 @@ Every action is pinned to a full commit SHA, with its version in a comment. GitH
 
 | Level | Scope | Tools |
 |---|---|---|
-| Domain unit tests | Every value object and the aggregate: valid and invalid cases, normalization, boundaries (years 1999/2000 and 2100/2101, months 0/13, prices −1/0/max/max+1, names of 100/101 characters, Cyrillic character counting), the nil user ID, the subscription period (end before start, equal start and end, open-ended, value equality, and that it cannot be changed after construction), invalid zero values rejected by the aggregate | table-driven Go tests |
+| Domain unit tests | Every value object and the aggregate: valid and invalid cases, normalization, boundaries (years 1999/2000 and 2100/2101, months 0/13, prices −1/0/max/max+1, names of 100/101 characters, Cyrillic character counting, control characters and invalid UTF-8 in names), the nil user ID, the subscription period (end before start, equal start and end, open-ended, value equality, and that it cannot be changed after construction), invalid zero values rejected by the aggregate | table-driven Go tests |
 | HTTP adapter tests | Every endpoint, through an in-process HTTP recorder, with the real application service over hand-written in-memory fakes of the ports. Covers: status codes, `Location`, response shapes (`items` never `null`, `end_date` omitted), every rule in §4.3, including the decoding traps (`null` in a required field, duplicate keys, `400.0`, a non-object body, trailing data), 413 and 415, 503 when a port call outlives the request deadline, problem+json bodies, router 404/405 as problem+json with `Allow`, all field errors in one response in schema order | standard library |
 | Postgres integration tests | Repository CRUDL and not-found paths; filters; case-insensitive Cyrillic matching, including the index check (§5.2); ordering, pagination and the total; database constraints; migrations up → down → up. **Total cost** for every §2.7 case: inside, overlapping the start, overlapping the end, covering, open-ended, single-month period, touching boundaries, disjoint, price 0, no rows, maximum price × 1 212 months without overflow | testcontainers with the image from `compose.yaml` (§10.5), initialized with the `C` locale and UTF8 encoding (§5.2); one container per test package; each test creates its own database from `template0` (UTF8, `C` locale) and drops it at the end, so tests run in parallel |
 | Smoke | The composed stack starts; health, readiness and Swagger respond | CI (§10.4) |
@@ -711,7 +717,7 @@ While this document is a draft, every decision is written in its final form wher
 | 10 | Delivery | Six phases: walking skeleton first, then vertical slices (§12) |
 | 11 | `user_id` | Set once at creation, never changes, rejected in the PUT body |
 | 12 | Price | Value object, 0…2 147 483 647, required, integer only. A trial is a 0-price record; a price change is a new record |
-| 13 | Service name | Trim and collapse whitespace, preserve case, 1–100 characters |
+| 13 | Service name | Trim and collapse whitespace, preserve case, 1–100 characters *(Characters rule added by #75.)* |
 | 14 | Years | 2000–2100, for every month, including `from` and `to` |
 | 15 | Duplicates | Allowed; every record counts |
 | 16 | IDs and timestamps | UUID v7 generated in the application layer; one constructor; no database default; timestamps only in the database, `updated_at` set by the update statement; list ordered by ID |
@@ -773,3 +779,4 @@ While this document is a draft, every decision is written in its final form wher
 | 72 | CI triggers | Pushes to `main` and pull requests to `main`, so each pull request and each merge commit runs once; a newer push cancels a pull request's older run, runs on `main` are never canceled (§10.4) |
 | 73 | Smoke graceful stop | The smoke job stops the app and requires exit 0, so an entrypoint that leaves a shell as PID 1 or a broken shutdown fails CI instead of ending in a kill after the grace period (§10.4) |
 | 74 | Pre-commit hooks | Opt-in pre-commit hooks: the standard whitespace, YAML, conflict, large-file, private-key and no-commit-to-`main` checks, then `go mod tidy -diff` and `make lint`; no tests. Hook repositories pinned by SHA with a frozen comment and updated by Dependabot. A local convenience; CI remains the gate (§10.1, §10.5) |
+| 75 | Service name characters | After normalization, a service name must be valid UTF-8 with no control characters; otherwise 400 on the field, instead of a 500 from the database rejecting NUL or invalid UTF-8; the database repeats it with a CHECK constraint in a new migration (§2.2, §5.1) |
