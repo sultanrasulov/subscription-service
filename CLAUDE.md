@@ -63,6 +63,7 @@ Dependencies flow `httpapi → application → domain ← postgres`, and the dom
 ## API
 - REST + JSON under `/api/v1`. Errors are RFC 9457 problem+json.
 - A handler change updates its swag annotations in the same change.
+- A query or path parameter's example is `extensions(x-example=…)`, never `example(…)`: Swagger 2.0 has no `example` on a non-body parameter, and Swagger UI reads `x-example` instead. `example` stays on schema fields (struct tags).
 - Request bodies go only through the strict decoder (design §4.3).
 - Don't change the public contract (paths, fields, status codes) without updating the design first.
 
