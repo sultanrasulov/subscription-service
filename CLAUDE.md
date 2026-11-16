@@ -27,14 +27,15 @@ Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), D
 - `make pre-commit-install` once per clone: every commit then runs `.pre-commit-config.yaml` (whitespace, YAML, `go mod tidy -diff`, `make lint`, no commit to `main`). `make pre-commit-run` checks every file. pre-commit itself is installed once per machine, for example with `pipx install pre-commit`.
 
 ## Architecture
-- `internal/subscription/domain`: the aggregate, value objects, ports and errors. Standard library and uuid only; no HTTP, JSON or SQL; never reads the clock.
+- `internal/subscription/domain`: the aggregate, value objects, ports and errors. Standard library, uuid and `internal/shared` only; no HTTP, JSON or SQL; never reads the clock.
 - `internal/subscription/application`: one service, one method per use case. It receives value objects and returns domain objects.
 - `internal/subscription/adapters/httpapi`: parses and validates raw input, calls the application, and maps errors to problem+json.
 - `internal/subscription/adapters/postgres`: the only code that talks to the database. It implements the domain ports.
+- `internal/shared/valueobject`: value objects every bounded context may use, such as `ID[K]`, the typed identifier. Only value objects: no serialization, no helpers. Standard library and uuid only. A new identifier is an unexported kind, an alias and a constructor (see `subscription_id.go`).
 - `internal/platform/*`: domain-neutral config, logger, Postgres pool and migrations, problem+json, and the HTTP server.
 - `migrations/`: SQL migrations.
 
-Dependencies flow `httpapi → application → domain ← postgres`. Adapters may use `platform`. `platform` never imports `internal/subscription`. depguard enforces this in CI. Details: design §3.
+Dependencies flow `httpapi → application → domain ← postgres`, and the domain may use `internal/shared`. Adapters may use `platform`. `platform` never imports `internal/subscription` or `internal/shared`. The application and the adapters never import `internal/shared` either: they create identifiers through the domain's constructors, such as `NewUserID`. depguard enforces this in CI. Details: design §3.
 
 ## Domain modeling
 - One bounded context: `subscription`.

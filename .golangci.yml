@@ -53,12 +53,18 @@ linters:
       rules:
         domain:
           files: ["**/internal/subscription/domain/**"]
-          # The domain depends only on the standard library and a UUID library,
-          # so anything else is rejected; deny still wins for the standard packages it names.
+          # The domain depends only on the standard library, a UUID library and the
+          # shared value objects, so anything else is rejected; deny still wins for
+          # the standard packages it names.
           list-mode: strict
           allow:
             - $gostd
             - github.com/google/uuid
+            - github.com/sultanrasulov/subscription-service/internal/shared/
+            # The external test package imports the package it tests. The
+            # trailing $ makes this an exact match, so a subpackage still needs
+            # its own decision.
+            - github.com/sultanrasulov/subscription-service/internal/subscription/domain$
           deny:
             - pkg: net/http
               desc: the domain knows nothing about HTTP
@@ -89,6 +95,8 @@ linters:
               desc: dependencies point inward
             - pkg: github.com/sultanrasulov/subscription-service/internal/platform
               desc: the application does not depend on platform
+            - pkg: github.com/sultanrasulov/subscription-service/internal/shared
+              desc: identifiers are created through the domain's constructors
         httpapi:
           files: ["**/internal/subscription/adapters/httpapi/**"]
           deny:
@@ -98,6 +106,8 @@ linters:
               desc: SQL lives in adapters/postgres
             - pkg: github.com/jackc/pgx
               desc: SQL lives in adapters/postgres
+            - pkg: github.com/sultanrasulov/subscription-service/internal/shared
+              desc: identifiers are created through the domain's constructors
         postgres-adapter:
           files: ["**/internal/subscription/adapters/postgres/**"]
           deny:
@@ -105,11 +115,33 @@ linters:
               desc: adapters do not know each other
             - pkg: net/http
               desc: HTTP lives in adapters/httpapi
+            - pkg: github.com/sultanrasulov/subscription-service/internal/shared
+              desc: identifiers are created through the domain's constructors
         platform:
           files: ["**/internal/platform/**"]
           deny:
             - pkg: github.com/sultanrasulov/subscription-service/internal/subscription
               desc: platform is domain-neutral
+            - pkg: github.com/sultanrasulov/subscription-service/internal/shared
+              desc: platform is domain-neutral
+        shared:
+          files: ["**/internal/shared/**"]
+          # Shared value objects are domain code that every bounded context may
+          # use, so they are as pure as a domain: the standard library, a UUID
+          # library and one another. Anything else is rejected, including every
+          # bounded context and platform.
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - github.com/sultanrasulov/subscription-service/internal/shared/
+          deny:
+            - pkg: net/http
+              desc: shared value objects know nothing about HTTP
+            - pkg: encoding/json
+              desc: serialization lives in adapters
+            - pkg: database/sql
+              desc: shared value objects know nothing about SQL
   exclusions:
     rules:
       # Tests use fixed timeouts, test servers, requests without a context,
