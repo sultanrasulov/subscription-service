@@ -31,7 +31,7 @@ type Options struct {
 	// RequestTimeout is the deadline of every request's context.
 	RequestTimeout time.Duration
 
-	// Register adds the API routes to the service's one mux. Phase 3 sets it.
+	// Register adds the API routes to the service's one mux.
 	Register func(mux *http.ServeMux)
 }
 

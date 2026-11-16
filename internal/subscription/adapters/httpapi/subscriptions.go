@@ -1,0 +1,85 @@
+package httpapi
+
+import (
+	"net/http"
+
+	"github.com/sultanrasulov/subscription-service/internal/platform/jsonbody"
+	"github.com/sultanrasulov/subscription-service/internal/platform/problem"
+	"github.com/sultanrasulov/subscription-service/internal/subscription/domain"
+)
+
+// create stores a new subscription.
+//
+//	@Summary		Create a subscription
+//	@Description	Every field error is reported in one response, in the schema's field order, then unknown and duplicated fields.
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Param			subscription	body		createRequest			true	"The subscription; omit end_date for an open-ended one"
+//	@Success		201				{object}	subscriptionResponse	"Created; Location holds its URL"
+//	@Header			201				{string}	Location				"/api/v1/subscriptions/{id}"
+//	@Failure		400				{object}	problem.Details			"Invalid fields or a malformed body"
+//	@Failure		413				{object}	problem.Details			"Body over 1 MiB"
+//	@Failure		415				{object}	problem.Details			"Content-Type is not application/json"
+//	@Failure		500				{object}	problem.Details
+//	@Failure		503				{object}	problem.Details	"The request timed out"
+//	@Router			/subscriptions [post]
+func (a *API) create(w http.ResponseWriter, r *http.Request) {
+	obj, err := jsonbody.Read(w, r, maxBodyBytes)
+	if err != nil {
+		a.unreadable(w, r, err)
+		return
+	}
+	in, fieldErrors := readCreate(obj)
+	if len(fieldErrors) > 0 {
+		invalid(w, fieldErrors)
+		return
+	}
+
+	s, err := a.svc.Create(r.Context(), in.userID, in.name, in.price, in.period)
+	if err != nil {
+		a.fail(w, r, "create subscription", err)
+		return
+	}
+	w.Header().Set("Location", basePath+"/subscriptions/"+s.ID().UUID().String())
+	writeJSON(w, http.StatusCreated, toResponse(s))
+}
+
+// get returns one subscription.
+//
+//	@Summary	Get a subscription
+//	@Tags		subscriptions
+//	@Produce	json
+//	@Param		id	path		string	true	"Subscription ID, a canonical UUID"	format(uuid)
+//	@Success	200	{object}	subscriptionResponse
+//	@Failure	400	{object}	problem.Details	"Malformed ID"
+//	@Failure	404	{object}	problem.Details	"No such subscription"
+//	@Failure	500	{object}	problem.Details
+//	@Failure	503	{object}	problem.Details	"The request timed out"
+//	@Router		/subscriptions/{id} [get]
+func (a *API) get(w http.ResponseWriter, r *http.Request) {
+	id, fieldErr, ok := pathID(r)
+	if !ok {
+		invalid(w, []problem.FieldError{fieldErr})
+		return
+	}
+	s, err := a.svc.Get(r.Context(), id)
+	if err != nil {
+		a.fail(w, r, "get subscription", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toResponse(s))
+}
+
+// pathID reads the {id} path value as a subscription ID.
+func pathID(r *http.Request) (domain.SubscriptionID, problem.FieldError, bool) {
+	raw, ok := parseUUID(r.PathValue("id"))
+	if !ok {
+		return domain.SubscriptionID{}, problem.FieldError{Field: "id", Message: "must be a valid UUID"}, false
+	}
+	id, err := domain.NewSubscriptionID(raw)
+	if err != nil {
+		return domain.SubscriptionID{}, problem.FieldError{Field: "id", Message: "must not be the nil UUID"}, false
+	}
+	return id, problem.FieldError{}, true
+}
