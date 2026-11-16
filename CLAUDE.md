@@ -75,6 +75,7 @@ Dependencies flow `httpapi → application → domain ← postgres`, and the dom
 - TDD: write the failing test first, then the code.
 - Domain: table-driven unit tests.
 - HTTP adapter: `httptest`, with the real application service over hand-written fakes.
+- The fakes of the domain's ports live in `internal/subscription/domain/domaintest`. They keep the ports' contracts as the database adapter does, store values, and can fail every call (`Fail`) or block until the context ends (`Block`).
 - Postgres adapter: integration tests on testcontainers, against a UTF8 database with the `C` locale.
 - Integration tests skip themselves under `-short`.
 - Tests sit next to the code (`foo_test.go`).
