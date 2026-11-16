@@ -62,30 +62,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: Start the stack
         run: docker compose up --build --wait --wait-timeout 180
-      - name: Check the operational routes
-        run: |
-          curl -fsS http://127.0.0.1:8080/health
-          curl -fsS http://127.0.0.1:8080/ready
-          curl -fsS http://127.0.0.1:8080/swagger/doc.json | jq -e '.swagger == "2.0"'
-          curl -fsS -o /dev/null http://127.0.0.1:8080/swagger/index.html
-      # The one end-to-end check of the built image against a real database:
-      # the specification documents the API, and a subscription created with
-      # POST reads back through its Location.
-      - name: Check the API end to end
-        run: |
-          curl -fsS http://127.0.0.1:8080/swagger/doc.json | jq -e '.paths | length > 0'
-          headers=$(curl -fsS -o /dev/null -D - \
-            -H 'Content-Type: application/json' \
-            -d '{"service_name": "Yandex Plus", "price": 400, "user_id": "60601fee-2bf1-4721-ae6f-7636e79a0cba", "start_date": "07-2025"}' \
-            http://127.0.0.1:8080/api/v1/subscriptions | tr -d '\r')
-          # -f catches only 4xx and 5xx; a create must be exactly 201.
-          echo "$headers" | head -n 1 | grep -q ' 201 '
-          location=$(echo "$headers" | sed -n 's/^[Ll]ocation: //p')
-          test -n "$location"
-          curl -fsS "http://127.0.0.1:8080$location" |
-            jq -e '.service_name == "Yandex Plus" and .price == 400 and .start_date == "07-2025" and (has("end_date") | not)'
+      # The checks live in a Go test that runs the same way on a developer's
+      # machine; this job only starts the stack, runs the test and stops it.
+      # It is the one end-to-end check of the built image against a real
+      # database.
+      - name: Check the stack end to end
+        run: make smoke
       # SIGTERM must reach the binary and end in a graceful shutdown. An entrypoint
       # that leaves a shell as PID 1, such as a wrapper script without exec, does
       # not forward the signal, and Docker kills the app with 137 after the grace

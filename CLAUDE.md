@@ -21,6 +21,7 @@ Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), D
 - `make db`, then `make run`: Postgres in Docker, the service on the host.
 - `make test`: all tests with `-race`. Integration tests need Docker running.
 - `make test-unit`: `go test -short ./...`, without Docker.
+- `make smoke`: the smoke test against the running stack, after `make up`. `COMPOSE_PROJECT_NAME=smoke make up smoke` checks a stack of its own and leaves the `make db` database alone.
 - One test: `go test ./<package> -run 'TestName/subtest' -v`.
 - One integration test: `go test ./internal/subscription/adapters/postgres -run 'TestName' -count=1 -v`. `-count=1` bypasses the test cache.
 - `make lint`, `make swagger`, `make up` / `make down` / `make logs`.
@@ -34,6 +35,7 @@ Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), D
 - `internal/shared/valueobject`: value objects every bounded context may use, such as `ID[K]`, the typed identifier. Only value objects: no serialization, no helpers. Standard library and uuid only. A new identifier is an unexported kind, an alias and a constructor (see `subscription_id.go`).
 - `internal/platform/*`: domain-neutral config, logger, Postgres pool and migrations, problem+json, strict reading of a JSON object body (`jsonbody`), and the HTTP server.
 - `migrations/`: SQL migrations.
+- `test/smoke`: the smoke test, a black-box Go test of the composed stack through its public API. It imports no code of the service; depguard enforces this.
 
 Dependencies flow `httpapi → application → domain ← postgres`, and the domain may use `internal/shared`. Adapters may use `platform`. `platform` never imports `internal/subscription` or `internal/shared`. The application and the adapters never import `internal/shared` either: they create identifiers through the domain's constructors, such as `NewUserID`. depguard enforces this in CI. Details: design §3.
 
@@ -80,7 +82,7 @@ Dependencies flow `httpapi → application → domain ← postgres`, and the dom
 - The total-cost fake reads the same in-memory store; `domaintest.TotalCostCases` holds the rule's cases, and both the fake's tests and the Postgres integration tests run them.
 - Postgres adapter: integration tests on testcontainers, against a UTF8 database with the `C` locale.
 - Integration tests skip themselves under `-short`.
-- Tests sit next to the code (`foo_test.go`).
+- Tests sit next to the code (`foo_test.go`). The one exception is the smoke test in `test/smoke`: a black-box test of the composed stack belongs to no package's code. It skips only when `SMOKE_BASE_URL` is not set; a value that is set but unusable fails it, because a skip passes.
 - Every bug fix ships with a regression test that fails without the fix.
 - Never delete, skip or weaken a failing test to make it pass. Fix the code or ask.
 

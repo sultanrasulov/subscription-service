@@ -142,6 +142,15 @@ linters:
               desc: serialization lives in adapters
             - pkg: database/sql
               desc: shared value objects know nothing about SQL
+        smoke:
+          files: ["**/test/smoke/**"]
+          # The smoke test checks the composed stack as a client does, over
+          # HTTP only, so it imports none of the service's code: only the
+          # standard library and a UUID library.
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/google/uuid
   exclusions:
     rules:
       # Tests use fixed timeouts, test servers, requests without a context,
