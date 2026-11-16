@@ -109,4 +109,5 @@ Dependencies flow `httpapi → application → domain ← postgres`, and the dom
 - Never create `compose.override.yaml`. Compose merges it automatically and would change a reviewer's `docker compose up`. Local development uses `compose.dev.yaml` through `make db` (design §10.3).
 - A failed migration leaves its version marked dirty. Editing the applied file does not help. Recovery is a manual `migrate force` (design §5.3).
 - Encoding a nil slice produces `null`, so list responses must return an initialized slice (design §4.2).
+- `r.URL.Query()` silently drops a pair with an invalid escape (`%zz`) or a `;` separator, so a filter can vanish and a list return every user's subscriptions. Parse with `url.ParseQuery(r.URL.RawQuery)` and answer any error with 400 (design §4.3).
 - A Go update changes `toolchain` in `go.mod` and the `golang` image in the `Dockerfile` together; the builder fails otherwise. A Dependabot PR for the image stays red until `toolchain` is bumped in the same PR (design §10.2).
