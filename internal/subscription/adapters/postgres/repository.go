@@ -110,7 +110,8 @@ func scan(row pgx.Row) (domain.Subscription, error) {
 
 	s, err := build(id, user, name, rubles, start, end)
 	if err != nil {
-		return domain.Subscription{}, fmt.Errorf("invalid stored row: %w", err)
+		// The ID names the row: a list fails on it without saying which one.
+		return domain.Subscription{}, fmt.Errorf("invalid stored row %s: %w", id, err)
 	}
 	return s, nil
 }

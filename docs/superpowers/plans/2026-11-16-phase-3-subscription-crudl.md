@@ -149,7 +149,8 @@ Commit: `feat(postgres): list subscriptions by filter and page`
 - [ ] «ЯНДЕКС ПЛЮС» finding «Яндекс Плюс»;
 - [ ] with `SET LOCAL enable_seqscan = off` in the test's transaction, a plan that uses the index on `lower(service_name)`, **and** the row found;
 - [ ] the order by ID;
-- [ ] pages, and an offset past the end giving no items with the right total.
+- [ ] pages, and an offset past the end giving no items with the right total;
+- [ ] an invalid stored row failing the list with an error that wraps `ErrInvalid` and names the row.
 
 **Known pitfall (verified):** an index check without a result check proves nothing. With the collation on only one side of the comparison the index is used and no row is found.
 
