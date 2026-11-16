@@ -11,14 +11,20 @@ package pgtest
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
@@ -129,4 +135,77 @@ func Start(ctx context.Context) (config.Postgres, func(context.Context) error, e
 		MaxConns:       5,
 		ConnectTimeout: 5 * time.Second,
 	}, stop, nil
+}
+
+// Main runs a test package against one container. It starts the container,
+// stores its configuration in *server, runs the tests and stops the container,
+// and returns the exit code; a package's TestMain is then
+// os.Exit(pgtest.Main(m, &server)). Under -short it only runs the tests, which
+// skip themselves.
+func Main(m *testing.M, server *config.Postgres) int {
+	// testing.Short reads the flags, and TestMain runs before m.Run parses them.
+	flag.Parse()
+	if testing.Short() {
+		return m.Run()
+	}
+
+	ctx := context.Background()
+	cfg, stop, err := Start(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	*server = cfg
+
+	code := m.Run()
+	if err := stop(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "stop postgres container:", err)
+	}
+	return code
+}
+
+// databases numbers the databases NewDatabase creates, so their names are
+// unique within a test binary.
+var databases atomic.Int64
+
+// NewDatabase creates an empty database on server, with the given encoding
+// and the C locale, and drops it when the test ends. Each test gets its own
+// database, so tests stay independent and can run in parallel. It skips the
+// test under -short, because it needs Docker.
+//
+// It only creates the database. Applying the migrations is the caller's job:
+// the package that applies them imports this one in its own tests, so doing it
+// here would be an import cycle.
+func NewDatabase(t testing.TB, server config.Postgres, encoding string) config.Postgres {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("integration test: needs Docker")
+	}
+
+	// Not t.Context(): it is canceled before cleanup runs, and the drop below
+	// runs in cleanup.
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, server.ConnString())
+	if err != nil {
+		t.Fatalf("connect as admin: %v", err)
+	}
+	t.Cleanup(admin.Close)
+
+	// CREATE DATABASE takes no bind parameters, so the name is quoted as an
+	// identifier and the encoding as a string literal.
+	name := fmt.Sprintf("test_%d", databases.Add(1))
+	ident := pgx.Identifier{name}.Sanitize()
+	literal := "'" + strings.ReplaceAll(encoding, "'", "''") + "'"
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+ident+" TEMPLATE template0 ENCODING "+literal+" LOCALE 'C'"); err != nil {
+		t.Fatalf("create database %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctx, "DROP DATABASE "+ident+" WITH (FORCE)"); err != nil {
+			t.Errorf("drop database %s: %v", name, err)
+		}
+	})
+
+	cfg := server
+	cfg.Database = name
+	return cfg
 }

@@ -20,9 +20,10 @@ type Repository interface {
 	// error that wraps ErrNotFound if there is none.
 	Update(ctx context.Context, s Subscription) error
 
-	// Delete removes the subscription with the given ID, or returns an error
-	// that wraps ErrNotFound if there is none.
-	Delete(ctx context.Context, id SubscriptionID) error
+	// Delete removes the subscription with the given ID and returns it, so a
+	// caller can still report what was deleted, or returns an error that wraps
+	// ErrNotFound if there is none.
+	Delete(ctx context.Context, id SubscriptionID) (Subscription, error)
 
 	// List returns the requested page of the subscriptions that match the
 	// query's filter, ordered by ID, and total, the number of all of them

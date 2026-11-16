@@ -114,7 +114,8 @@ Commit: `feat(postgres): add the subscription repository`
 - A row becomes a subscription only through the domain's constructors. A constructor's error is wrapped with `%w` and the row's ID.
 - `pgx.ErrNoRows` and zero affected rows → an error that wraps `ErrNotFound`, with the ID.
 - `Update` writes the service name, the price and both dates, and sets `updated_at = now()` in the statement itself. It never writes `user_id`: the user of a subscription never changes (#11).
-- `Delete` is `DELETE … RETURNING`.
+- `Delete` is `DELETE … RETURNING`, in a transaction that rolls back when the deleted row cannot be built into a subscription, so an error always means nothing was deleted.
+- The test packages that need a container share `pgtest.Main(m *testing.M, server *config.Postgres) int`; each `TestMain` is `os.Exit(pgtest.Main(m, &server))`.
 
 **Done when:** tests cover
 - [ ] a round trip of a closed and an open-ended period, a price of 0 and a Cyrillic name;
@@ -122,6 +123,7 @@ Commit: `feat(postgres): add the subscription repository`
 - [ ] `Delete` returning the deleted subscription, and `Get` then giving not found;
 - [ ] `Update` moving `updated_at` and leaving `user_id` unchanged;
 - [ ] a corrupted row: a direct `INSERT` with the name `"\u00a0"`, a name of only a no-break space, makes `Get` return an error for which `errors.Is(err, domain.ErrInvalid)` holds. The chain is kept; the HTTP adapter turns it into a 500.
+- [ ] `Delete` of such a row returns that error and leaves the row in place.
 
 **Known pitfalls (verified):**
 - `pgtest` cannot import `platform/postgres`: the internal test of `package postgres` imports `pgtest`, so that would be an import cycle in tests. The adapter's tests open the pool and apply the migrations themselves.

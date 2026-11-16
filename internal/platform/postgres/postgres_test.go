@@ -2,17 +2,13 @@ package postgres
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
-	"flag"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,59 +26,7 @@ import (
 var server config.Postgres
 
 func TestMain(m *testing.M) {
-	flag.Parse()
-	if testing.Short() {
-		os.Exit(m.Run())
-	}
-
-	ctx := context.Background()
-	cfg, stop, err := pgtest.Start(ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	server = cfg
-
-	code := m.Run()
-	if err := stop(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "stop postgres container:", err)
-	}
-	os.Exit(code)
-}
-
-// databases numbers the databases freshDB creates.
-var databases atomic.Int64
-
-// freshDB creates an empty database in the test container, with the given
-// encoding, and drops it when the test ends. Each test gets its own database,
-// so tests stay independent and can run in parallel.
-func freshDB(t *testing.T, encoding string) config.Postgres {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("integration test: needs Docker")
-	}
-
-	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, server.ConnString())
-	if err != nil {
-		t.Fatalf("connect as admin: %v", err)
-	}
-	t.Cleanup(admin.Close)
-
-	name := fmt.Sprintf("test_%d", databases.Add(1))
-	if _, err := admin.Exec(ctx, fmt.Sprintf(
-		"CREATE DATABASE %s TEMPLATE template0 ENCODING '%s' LOCALE 'C'", name, encoding)); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() {
-		if _, err := admin.Exec(ctx, "DROP DATABASE "+name+" WITH (FORCE)"); err != nil {
-			t.Errorf("drop database %s: %v", name, err)
-		}
-	})
-
-	cfg := server
-	cfg.Database = name
-	return cfg
+	os.Exit(pgtest.Main(m, &server))
 }
 
 // newPool opens a pool on cfg and closes it when the test ends.
@@ -259,7 +203,7 @@ func listenerPort(t *testing.T, ln net.Listener) int {
 func TestNewPool_ConnectsAndPings(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	if err := pool.Ping(t.Context()); err != nil {
 		t.Errorf("Ping() error = %v", err)
 	}
@@ -271,7 +215,7 @@ func TestNewPool_ConnectsAndPings(t *testing.T) {
 func TestNewPool_FailsOnWrongPassword(t *testing.T) {
 	t.Parallel()
 
-	cfg := freshDB(t, "UTF8")
+	cfg := pgtest.NewDatabase(t, server, "UTF8")
 	cfg.Password = "wrong-password"
 	_, err := NewPool(t.Context(), cfg)
 	if err == nil {
@@ -285,7 +229,7 @@ func TestNewPool_FailsOnWrongPassword(t *testing.T) {
 func TestMigrate_AppliesSchemaAndIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	var logs bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&logs, nil))
 
@@ -335,7 +279,7 @@ func TestMigrate_AppliesSchemaAndIsIdempotent(t *testing.T) {
 func TestMigrate_DownThenUpAgain(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	if err := Migrate(t.Context(), pool, migrations.FS, discardLogger()); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
@@ -373,7 +317,7 @@ func TestMigrate_DownThenUpAgain(t *testing.T) {
 func TestMigrate_StepsDownThenUpAgain(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	if err := Migrate(t.Context(), pool, migrations.FS, discardLogger()); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
@@ -466,7 +410,7 @@ func tableExists(t *testing.T, pool *pgxpool.Pool) bool {
 func TestMigrate_LeavesPoolClosable(t *testing.T) {
 	t.Parallel()
 
-	pool, err := NewPool(t.Context(), freshDB(t, "UTF8"))
+	pool, err := NewPool(t.Context(), pgtest.NewDatabase(t, server, "UTF8"))
 	if err != nil {
 		t.Fatalf("NewPool() error = %v", err)
 	}
@@ -491,7 +435,7 @@ func TestMigrate_LeavesPoolClosable(t *testing.T) {
 func TestMigrate_FailsOnNonUTF8Database(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "SQL_ASCII"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "SQL_ASCII"))
 	err := Migrate(t.Context(), pool, migrations.FS, discardLogger())
 	if err == nil {
 		t.Fatal("Migrate() error = nil, want an error")
@@ -511,7 +455,7 @@ func TestMigrate_FailsOnNonUTF8Database(t *testing.T) {
 func TestSchema_RejectsInvalidRows(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	if err := Migrate(t.Context(), pool, migrations.FS, discardLogger()); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
