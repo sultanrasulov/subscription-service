@@ -35,7 +35,7 @@ type env struct {
 func newEnv() env {
 	repo := domaintest.NewRepository()
 	logs := &recorder{}
-	svc := application.NewService(repo, slog.New(slog.DiscardHandler))
+	svc := application.NewService(repo, domaintest.NewTotalCostReader(repo), slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
 	httpapi.New(svc, slog.New(logs)).Register(mux)
 	return env{repo: repo, handler: mux, logs: logs}

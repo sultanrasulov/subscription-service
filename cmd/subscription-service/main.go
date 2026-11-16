@@ -82,7 +82,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}
 	// The subscription context, from the database inward and back out to HTTP.
 	repo := subscriptionpostgres.NewRepository(pool)
-	api := httpapi.New(application.NewService(repo, log), log)
+	totals := subscriptionpostgres.NewTotalCostReader(pool)
+	api := httpapi.New(application.NewService(repo, totals, log), log)
 
 	handler := httpserver.NewHandler(httpserver.Options{
 		Logger:         log,

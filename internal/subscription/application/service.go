@@ -17,16 +17,18 @@ import (
 	"github.com/sultanrasulov/subscription-service/internal/subscription/domain"
 )
 
-// Service runs the subscription use cases on a repository.
+// Service runs the subscription use cases on a repository and a total-cost
+// reader.
 type Service struct {
-	repo domain.Repository
-	log  *slog.Logger
+	repo   domain.Repository
+	totals domain.TotalCostReader
+	log    *slog.Logger
 }
 
-// NewService returns a service that stores subscriptions in repo and logs its
-// events to log.
-func NewService(repo domain.Repository, log *slog.Logger) *Service {
-	return &Service{repo: repo, log: log}
+// NewService returns a service that stores subscriptions in repo, reads total
+// costs from totals, and logs its events to log.
+func NewService(repo domain.Repository, totals domain.TotalCostReader, log *slog.Logger) *Service {
+	return &Service{repo: repo, totals: totals, log: log}
 }
 
 // Create stores a new subscription with a fresh ID and returns it.
@@ -98,6 +100,17 @@ func (s *Service) List(ctx context.Context, q domain.ListQuery) ([]domain.Subscr
 		return nil, 0, fmt.Errorf("list subscriptions: %w", err)
 	}
 	return items, total, nil
+}
+
+// TotalCost returns, in whole rubles, the total cost of the subscriptions that
+// match the query's filter over its calculation period. It is a read, so it
+// logs no event.
+func (s *Service) TotalCost(ctx context.Context, q domain.TotalCostQuery) (int64, error) {
+	total, err := s.totals.TotalCost(ctx, q)
+	if err != nil {
+		return 0, fmt.Errorf("calculate total cost: %w", err)
+	}
+	return total, nil
 }
 
 // event logs a business event with the IDs that tell what it happened to.

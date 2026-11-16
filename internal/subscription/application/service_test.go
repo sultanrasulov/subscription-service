@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ type fixture struct {
 func newFixture() fixture {
 	logs := &recorder{}
 	repo := domaintest.NewRepository()
-	return fixture{repo: repo, svc: application.NewService(repo, slog.New(logs)), logs: logs}
+	return fixture{repo: repo, svc: application.NewService(repo, domaintest.NewTotalCostReader(repo), slog.New(logs)), logs: logs}
 }
 
 // recorder is a slog.Handler that keeps every record.
@@ -207,7 +208,7 @@ func TestService_UpdateOfASubscriptionDeletedMeanwhile(t *testing.T) {
 
 	f := newFixture()
 	s := f.created(t)
-	svc := application.NewService(deletedMeanwhile{f.repo}, slog.New(f.logs))
+	svc := application.NewService(deletedMeanwhile{f.repo}, domaintest.NewTotalCostReader(f.repo), slog.New(f.logs))
 
 	_, err := svc.Update(t.Context(), s.ID(), serviceName(t, "Okko"), price(t, 199), openPeriod(t, 2025, time.July))
 	if !errors.Is(err, domain.ErrNotFound) {
@@ -285,6 +286,42 @@ func TestService_List(t *testing.T) {
 	}
 }
 
+// Total cost reads what the repository stores. A read logs no event.
+func TestService_TotalCost(t *testing.T) {
+	t.Parallel()
+
+	// Over 2025, Alice's Netflix adds 6 × 400 and her Okko 3 × 199.
+	f := newFixture()
+	alice := userID(t)
+	for _, s := range []struct {
+		name   string
+		rubles int64
+		period domain.SubscriptionPeriod
+	}{
+		{"Netflix", 400, openPeriod(t, 2025, time.July)},
+		{"Okko", 199, closedPeriod(t, 2025, time.March, 2025, time.May)},
+	} {
+		if _, err := f.svc.Create(t.Context(), alice, serviceName(t, s.name), price(t, s.rubles), s.period); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+	f.created(t)   // another user's
+	f.logs.reset() // only what TotalCost logs is checked below
+
+	got, err := f.svc.TotalCost(t.Context(), totalCostQuery(t, domain.Filter{UserID: alice}))
+	if err != nil {
+		t.Fatalf("TotalCost() error = %v", err)
+	}
+	if want := int64(6*400 + 3*199); got != want {
+		t.Errorf("TotalCost() = %d, want %d", got, want)
+	}
+	f.logs.mu.Lock()
+	defer f.logs.mu.Unlock()
+	if len(f.logs.records) != 0 {
+		t.Errorf("logged %d records, want none for a read", len(f.logs.records))
+	}
+}
+
 // The service passes the store's failures on, wrapped, so the HTTP adapter can
 // still recognize them.
 func TestService_PassesStoreFailuresOn(t *testing.T) {
@@ -299,13 +336,18 @@ func TestService_PassesStoreFailuresOn(t *testing.T) {
 	_, getErr := f.svc.Get(t.Context(), s.ID())
 	_, updateErr := f.svc.Update(t.Context(), s.ID(), s.ServiceName(), s.Price(), s.Period())
 	_, _, listErr := f.svc.List(t.Context(), domain.ListQuery{Limit: 10})
+	_, totalCostErr := f.svc.TotalCost(t.Context(), totalCostQuery(t, domain.Filter{}))
 	for op, err := range map[string]error{
 		"Create": createErr, "Get": getErr, "Update": updateErr,
 		"Delete": f.svc.Delete(t.Context(), s.ID()), "List": listErr,
+		"TotalCost": totalCostErr,
 	} {
 		if !errors.Is(err, boom) {
 			t.Errorf("%s() error = %v, want %v", op, err, boom)
 		}
+	}
+	if totalCostErr == nil || !strings.HasPrefix(totalCostErr.Error(), "calculate total cost: ") {
+		t.Errorf("TotalCost() error = %v, want it to name the operation", totalCostErr)
 	}
 	// An event says that something happened; nothing did.
 	for _, msg := range []string{"subscription created", "subscription updated", "subscription deleted"} {
@@ -380,6 +422,21 @@ func price(t *testing.T, rubles int64) domain.Price {
 		t.Fatalf("NewPrice(%d) error = %v", rubles, err)
 	}
 	return p
+}
+
+// totalCostQuery asks for the total cost over 2025 of the subscriptions that
+// match f.
+func totalCostQuery(t *testing.T, f domain.Filter) domain.TotalCostQuery {
+	t.Helper()
+	period, err := domain.NewCalculationPeriod(month(t, 2025, time.January), month(t, 2025, time.December))
+	if err != nil {
+		t.Fatalf("NewCalculationPeriod() error = %v", err)
+	}
+	q, err := domain.NewTotalCostQuery(f, period)
+	if err != nil {
+		t.Fatalf("NewTotalCostQuery() error = %v", err)
+	}
+	return q
 }
 
 func month(t *testing.T, year int, m time.Month) domain.MonthYear {

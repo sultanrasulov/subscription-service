@@ -77,6 +77,7 @@ Dependencies flow `httpapi → application → domain ← postgres`, and the dom
 - Domain: table-driven unit tests.
 - HTTP adapter: `httptest`, with the real application service over hand-written fakes.
 - The fakes of the domain's ports live in `internal/subscription/domain/domaintest`. They keep the ports' contracts as the database adapter does, store values, and can fail every call (`Fail`) or block until the context ends (`Block`).
+- The total-cost fake reads the same in-memory store; `domaintest.TotalCostCases` holds the rule's cases, and both the fake's tests and the Postgres integration tests run them.
 - Postgres adapter: integration tests on testcontainers, against a UTF8 database with the `C` locale.
 - Integration tests skip themselves under `-short`.
 - Tests sit next to the code (`foo_test.go`).
