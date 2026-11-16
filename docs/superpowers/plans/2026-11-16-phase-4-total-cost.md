@@ -67,7 +67,6 @@ These failure modes are implied by the spec but easy to miss. Each is covered by
 
 - README: a curl example for total cost and the §2.7 rule in plain words; `make db` before `make run`, because `compose.yaml` does not publish the database port.
 - Check Swagger against real behavior, including 400 for `PUT /total-cost` and the `Allow` of a 405.
-- Validate `doc.json` once against the Swagger 2.0 schema, with no new dependency in the repository: the smoke job checks only `.swagger == "2.0"`.
 - The final check of CLAUDE.md.
 - Before merging: `gh pr view`. The pull request's head is the last commit of Task 3, and its title is `feat: total cost (phase 4)`.
 
@@ -231,3 +230,47 @@ Commit: `feat(httpapi): calculate the total cost`
 | explicit `PUT` and `DELETE` routes on the path | they register, but their `Allow` differs from the router's. Rejected |
 | swag `example(01-2025)` on a parameter | `"example": "01-2025"`, a field the Swagger 2.0 schema forbids there |
 | swag `extensions(x-example=01-2025)` | `"x-example": "01-2025"`, allowed by the schema (`^x-`) |
+
+---
+
+## Amendment: Task 4, the smoke checks as a Go test
+
+Agreed after Task 3's review. The smoke checks move out of `ci.yml` into a Go test: the CI configuration orchestrates, and the checks are code that runs on a developer's machine and is linted and reviewed like the rest (decision #86).
+
+- Task 3 landed without its smoke step. Its "the smoke job green" and decision 7 are met by Task 4.
+- The one-off validation of `doc.json` against the Swagger 2.0 schema, once handed over to phase 5, was done in Task 3's review: no errors, and an `example` on a parameter is reported. It is dropped from "Hands over to phase 5".
+- Two commits: `docs: move the smoke checks into a Go test` carries this amendment and the design (§3.1, §10.1, §10.4, §11, #86, with #34, #82 and #85 marked as amended); the code follows.
+
+### Task 4: The smoke checks as a Go test
+Commit: `test(smoke): run the smoke checks as a Go test`
+
+**Goal:** every check of the smoke job, the total cost included, runs as a black-box Go test that `make smoke` points at a running stack; the CI job only orchestrates (design §10.4, §11).
+
+**Scope:** `test/smoke/smoke_test.go`; `Makefile`; the smoke job in `.github/workflows/ci.yml`; a depguard rule in `.golangci.yml`; CLAUDE.md (Commands, Architecture, Testing). The Testing line states the exception to "tests sit next to the code": a black-box test of the composed stack belongs to no package's code, so it lives in `test/smoke`.
+
+**Provides:**
+- `package smoke_test`, a package of tests only:
+  - `TestSmoke_OperationalRoutes`: `/health` and `/ready` → 200; `/swagger/doc.json` is Swagger 2.0 with at least one path; `/swagger/index.html` → 200;
+  - `TestSmoke_SubscriptionEndToEnd`: a new user (`uuid.New()`); POST → exactly 201 with a `Location`; GET through it → the same fields and no `end_date`; `GET /api/v1/subscriptions/total-cost?from=01-2025&to=12-2025&user_id=<user>` → `{"total_cost": 2400}`, open-ended from 07-2025 at 400.
+- `make smoke`: `SMOKE_BASE_URL` from the shell, or else `http://` plus `docker compose port app 8080`; `go test ./test/smoke -count=1 -v`. The recipe fails when `docker compose port` fails or prints nothing, and never builds a partial URL.
+- The CI smoke job: `actions/setup-go` pinned to the same SHA as the test job; the steps "Check the operational routes" and "Check the API end to end" become one `make smoke`; the graceful stop, the logs and the teardown stay.
+- A depguard rule `smoke` for `**/test/smoke/**`: strict, `$gostd` and `github.com/google/uuid` only.
+
+**Rules:**
+- The test skips only when `SMOKE_BASE_URL` is not set, so `make test` and `go test ./...` need no stack. A value that is set but empty, or not an absolute `http` or `https` URL, fails it. `go test` counts a skip as a pass, so a smoke test that skipped by mistake would leave CI green without a single check.
+- It reaches the service only over HTTP, as a client does: no `internal/` import, which depguard enforces.
+- An `http.Client` with a timeout, so a hung stack fails the test instead of waiting for the job's timeout.
+- `-count=1`: the test does not change between runs, but the stack does, so a cached result would be wrong.
+
+**Done when:**
+- [ ] `make up && make smoke` passes, and passes again on the same stack;
+- [ ] without a stack, `make test` reports the smoke tests as skipped;
+- [ ] with the stack stopped, `make smoke` fails with a clear error, and never skips or passes; an empty or relative `SMOKE_BASE_URL` fails the test;
+- [ ] the test fails when it should: a wrong expected value, and a stopped stack, which fails on the connection rather than hanging;
+- [ ] `make lint` is clean, and an `internal/` import in `test/smoke` is reported by depguard;
+- [ ] CI is green on the pull request, with the smoke job running `make smoke`, and its log (`-v`) shows both tests as PASS.
+
+**Known pitfalls:**
+- `make up` recreates the database container of `make db`. A manual run sets `COMPOSE_PROJECT_NAME`, which wins over `name:` in `compose.yaml`: `COMPOSE_PROJECT_NAME=smoke make up smoke` starts and checks a project of its own, and the Makefile needs no logic for it; `APP_PORT` moves it when 8080 is taken. `-p` would not do: `make smoke` asks `docker compose port` in the default project and would not find the stack.
+- `docker compose port` prints `127.0.0.1:<port>`, the host side `APP_PORT` chose, so the Makefile repeats no port logic.
+- `os.Getenv` returns `""` both for an unset and for an empty variable, so it cannot tell "not set, skip" from "set but empty, fail". The test reads `SMOKE_BASE_URL` with `os.LookupEnv`, whose second result says whether the variable is set.
