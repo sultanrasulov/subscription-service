@@ -43,7 +43,7 @@ func (r *Repository) List(ctx context.Context, q domain.ListQuery) ([]domain.Sub
 // listQuery returns the query for one page of the subscriptions that match
 // q's filter, and its arguments.
 func listQuery(q domain.ListQuery) (string, []any) {
-	clause, args := where(q.Filter)
+	clause, args := where(q.Filter, nil)
 	args = append(args, q.Limit, q.Offset)
 	return fmt.Sprintf(`SELECT %s FROM subscriptions%s ORDER BY id LIMIT $%d OFFSET $%d`,
 		columns, clause, len(args)-1, len(args)), args
@@ -52,12 +52,16 @@ func listQuery(q domain.ListQuery) (string, []any) {
 // countQuery returns the query that counts the subscriptions matching f, and
 // its arguments.
 func countQuery(f domain.Filter) (string, []any) {
-	clause, args := where(f)
+	clause, args := where(f, nil)
 	return `SELECT count(*) FROM subscriptions` + clause, args
 }
 
 // where turns a filter into a WHERE clause and its arguments; list and total
 // cost share it, so they always select the same subscriptions.
+//
+// A caller with conditions of its own passes them with the arguments they
+// refer to; the filter's conditions follow them and number their parameters
+// after those arguments.
 //
 // A condition is added only for a filter that is set. The alternative, "$1 IS
 // NULL OR user_id = $1", can keep the planner from using an index once a
@@ -68,11 +72,7 @@ func countQuery(f domain.Filter) (string, []any) {
 // covers only the column's side; the parameter would otherwise be lower-cased
 // under the database's default, which leaves Cyrillic unchanged in a C-locale
 // database.
-func where(f domain.Filter) (string, []any) {
-	var (
-		conditions []string
-		args       []any
-	)
+func where(f domain.Filter, args []any, conditions ...string) (string, []any) {
 	if !f.UserID.IsZero() {
 		args = append(args, f.UserID.UUID())
 		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)))
@@ -82,7 +82,7 @@ func where(f domain.Filter) (string, []any) {
 		conditions = append(conditions, fmt.Sprintf("lower(service_name) = lower($%d COLLATE pg_c_utf8)", len(args)))
 	}
 	if len(conditions) == 0 {
-		return "", nil
+		return "", args
 	}
 	return " WHERE " + strings.Join(conditions, " AND "), args
 }

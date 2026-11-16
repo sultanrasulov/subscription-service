@@ -101,7 +101,7 @@ Commit: `feat(postgres): read the total cost of subscriptions`
 **Rules:**
 - **One query:**
   - `WHERE` holds the overlap first, `start_date <= $to AND (end_date IS NULL OR end_date >= $from)`, then the filter's conditions;
-  - months = index(`LEAST(COALESCE(end_date, $to), $to)`) − index(`GREATEST(start_date, $from)`) + 1, where index = `EXTRACT(YEAR …) * 12 + EXTRACT(MONTH …)`;
+  - months = index(`LEAST(COALESCE(end_date, $to), $to)`) − index(`GREATEST(start_date, $from)`) + 1, where index = `EXTRACT(YEAR …)::integer * 12 + EXTRACT(MONTH …)::integer`;
   - the sum is `COALESCE(SUM(price::bigint * months), 0)::bigint`.
 - **The overlap is in `WHERE`, not a `max(0, …)` in `SELECT`:** rows outside the period are never read, and a negative month count cannot occur.
 - **Dates** go through the existing `firstDay`; values are always bound parameters.
@@ -121,8 +121,8 @@ Commit: `feat(postgres): read the total cost of subscriptions`
 | open-ended, starting after `to` | from 01-2026 | 0 |
 | touching `from` | 06-2024…01-2025 | `1 * 400` |
 | touching `to` | 12-2025…03-2026 | `1 * 400` |
-| disjoint, before | 01-2024…12-2024 | 0 |
-| disjoint, after | 01-2026…02-2026 | 0 |
+| disjoint, before | 01-2024…10-2024 | 0 |
+| disjoint, after | 03-2026…04-2026 | 0 |
 | a one-month subscription | 07-2025…07-2025 | `1 * 400` |
 | a one-month calculation period, `07-2025…07-2025` | 01-2025…12-2025 | `1 * 400` |
 | price 0 | 03-2025…05-2025, price 0 | 0 |
@@ -141,7 +141,8 @@ Commit: `feat(postgres): read the total cost of subscriptions`
 
 **Known pitfalls (verified on the image from `compose.yaml`, `C` locale):**
 - `SUM` over no rows is `NULL`, and `NULL` does not scan into an `int64`: hence `COALESCE`.
-- `EXTRACT` returns `numeric` since PostgreSQL 14. `price::bigint` is written anyway: should the month count ever become `integer`, `integer × integer` fails at the maximum price × 2 with `integer out of range`.
+- `EXTRACT` returns `numeric` since PostgreSQL 14. With a `numeric` month count the product is `numeric` too, and `price::bigint` would change nothing that a test can see, so the index casts each part to `integer`: the month count is then an integer, and without `price::bigint` the maximum case fails with `integer out of range` (found by a mutation check).
+- A disjoint period one month away from the calculation period gives a month count of exactly 0 even without the overlap check, so the disjoint cases sit two months or more away; then dropping either overlap condition gives a negative total (found by a mutation check).
 - `LEAST` and `GREATEST` ignore `NULL`. `COALESCE(end_date, $to)` stays: the query reads like the §2.7 rule.
 - pgx sends parameters untyped. With the period first and the filter after it, Postgres infers `{date, date, uuid, text}`, so no `::date` casts are needed.
 - The Cyrillic filter works after the period's parameters: `lower($4 COLLATE pg_c_utf8)` finds «Яндекс Плюс» by «ЯНДЕКС ПЛЮС».
