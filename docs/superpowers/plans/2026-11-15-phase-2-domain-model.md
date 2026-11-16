@@ -81,7 +81,7 @@ Not done here; the phase 3 plan decides each one.
 
 ## Amendment: typed identifiers (decision #76)
 
-Made after Task 5, in its own commit `refactor(domain): add typed identifiers as shared value objects`, before Task 6. Tasks 1–5 below record what they delivered at the time; this section and Task 6 describe the code from here on.
+Made after Task 5, in its own commit `refactor: add typed identifiers as shared value objects` (no scope: it touches more than the domain), before Task 6. Tasks 1–5 below record what they delivered at the time; this section and Task 6 describe the code from here on.
 
 - **Why:** Task 5 gave the aggregate a bare `uuid.UUID` ID while the user ID was already a value object, so the model was inconsistent, and a second identifier would have repeated `UserID` line by line.
 - **What:**
