@@ -35,6 +35,26 @@ func toResponse(s domain.Subscription) subscriptionResponse {
 	return resp
 }
 
+// listResponse is one page of subscriptions. Items is always an array, empty
+// when nothing matches; Limit and Offset are the values applied, defaults
+// included; Total counts every match, so a client can tell how many pages
+// there are.
+type listResponse struct {
+	Items  []subscriptionResponse `json:"items"`
+	Limit  int                    `json:"limit" example:"20"`
+	Offset int                    `json:"offset" example:"0"`
+	Total  int                    `json:"total" example:"57"`
+}
+
+func toListResponse(items []domain.Subscription, q domain.ListQuery, total int) listResponse {
+	// Made, not declared: a nil slice would encode as null.
+	resp := listResponse{Items: make([]subscriptionResponse, 0, len(items)), Limit: q.Limit, Offset: q.Offset, Total: total}
+	for _, s := range items {
+		resp.Items = append(resp.Items, toResponse(s))
+	}
+	return resp
+}
+
 // formatMonth writes a month as MM-YYYY.
 func formatMonth(m domain.MonthYear) string {
 	return fmt.Sprintf("%02d-%04d", int(m.Month()), m.Year())

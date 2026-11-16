@@ -71,6 +71,41 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toResponse(s))
 }
 
+// list returns one page of subscriptions.
+//
+//	@Summary		List subscriptions
+//	@Description	Filters combine with AND; the service name matches case-insensitively. Results are ordered by ID. Unknown parameters are ignored; a malformed query string, an empty or a repeated parameter is a 400.
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Param			user_id			query		string			false	"Only this user's subscriptions; a canonical UUID"	format(uuid)
+//	@Param			service_name	query		string			false	"Only this service, in any case"
+//	@Param			limit			query		int				false	"Page size"						minimum(1)	maximum(100)	default(20)
+//	@Param			offset			query		int				false	"Subscriptions to skip"			minimum(0)	default(0)
+//	@Success		200				{object}	listResponse
+//	@Failure		400				{object}	problem.Details	"Malformed query or invalid parameters"
+//	@Failure		500				{object}	problem.Details
+//	@Failure		503				{object}	problem.Details	"The request timed out"
+//	@Router			/subscriptions [get]
+func (a *API) list(w http.ResponseWriter, r *http.Request) {
+	values, ok := parseQuery(r.URL.RawQuery)
+	if !ok {
+		problem.Write(w, http.StatusBadRequest, "query string is malformed")
+		return
+	}
+	q, fieldErrors := readList(values)
+	if len(fieldErrors) > 0 {
+		invalid(w, fieldErrors)
+		return
+	}
+
+	items, total, err := a.svc.List(r.Context(), q)
+	if err != nil {
+		a.fail(w, r, "list subscriptions", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toListResponse(items, q, total))
+}
+
 // pathID reads the {id} path value as a subscription ID.
 func pathID(r *http.Request) (domain.SubscriptionID, problem.FieldError, bool) {
 	raw, ok := parseUUID(r.PathValue("id"))
