@@ -39,4 +39,5 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+basePath+"/subscriptions", a.list)
 	mux.HandleFunc("GET "+basePath+"/subscriptions/{id}", a.get)
 	mux.HandleFunc("PUT "+basePath+"/subscriptions/{id}", a.update)
+	mux.HandleFunc("DELETE "+basePath+"/subscriptions/{id}", a.remove)
 }
