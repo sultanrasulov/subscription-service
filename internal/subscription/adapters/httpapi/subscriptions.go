@@ -173,6 +173,41 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toListResponse(items, q, total))
 }
 
+// totalCost reports the total cost of subscriptions over a calculation period.
+//
+//	@Summary		Calculate the total cost
+//	@Description	The sum, over the subscriptions that match the filters, of each one's monthly price times the months its period shares with the calculation period. Both ends of both periods are inclusive; an open-ended subscription counts until to; no match gives 0. Filters combine with AND; the service name matches case-insensitively. Unknown parameters are ignored; a malformed query string, an empty or a repeated parameter is a 400.
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Param			from			query		string				true	"First month of the calculation period, MM-YYYY, inclusive"	extensions(x-example=01-2025)
+//	@Param			to				query		string				true	"Last month of the calculation period, MM-YYYY, inclusive; not before from"	extensions(x-example=12-2025)
+//	@Param			user_id			query		string				false	"Only this user's subscriptions; a canonical UUID"	format(uuid)
+//	@Param			service_name	query		string				false	"Only this service, in any case"
+//	@Success		200				{object}	totalCostResponse
+//	@Failure		400				{object}	problem.Details	"Malformed query or invalid parameters"
+//	@Failure		500				{object}	problem.Details
+//	@Failure		503				{object}	problem.Details	"The request timed out"
+//	@Router			/subscriptions/total-cost [get]
+func (a *API) totalCost(w http.ResponseWriter, r *http.Request) {
+	values, ok := parseQuery(r.URL.RawQuery)
+	if !ok {
+		problem.Write(w, http.StatusBadRequest, "query string is malformed")
+		return
+	}
+	q, fieldErrors := readTotalCost(values)
+	if len(fieldErrors) > 0 {
+		invalid(w, fieldErrors)
+		return
+	}
+
+	total, err := a.svc.TotalCost(r.Context(), q)
+	if err != nil {
+		a.fail(w, r, "calculate total cost", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, totalCostResponse{TotalCost: total})
+}
+
 // pathID reads the {id} path value as a subscription ID.
 func pathID(r *http.Request) (domain.SubscriptionID, problem.FieldError, bool) {
 	raw, ok := parseUUID(r.PathValue("id"))

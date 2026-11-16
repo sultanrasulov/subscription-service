@@ -37,6 +37,9 @@ func New(svc *application.Service, log *slog.Logger) *API {
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+basePath+"/subscriptions", a.create)
 	mux.HandleFunc("GET "+basePath+"/subscriptions", a.list)
+	// The literal segment wins over {id} for GET. PUT and DELETE on this path
+	// reach the {id} routes, where total-cost is not a UUID: a 400.
+	mux.HandleFunc("GET "+basePath+"/subscriptions/total-cost", a.totalCost)
 	mux.HandleFunc("GET "+basePath+"/subscriptions/{id}", a.get)
 	mux.HandleFunc("PUT "+basePath+"/subscriptions/{id}", a.update)
 	mux.HandleFunc("DELETE "+basePath+"/subscriptions/{id}", a.remove)

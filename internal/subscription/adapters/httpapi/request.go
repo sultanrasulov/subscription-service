@@ -261,24 +261,36 @@ func (b *body) period(startName, endName string) domain.SubscriptionPeriod {
 // monthFormat matches MM-YYYY: two digits, a hyphen, four digits.
 var monthFormat = regexp.MustCompile(`^[0-9]{2}-[0-9]{4}$`)
 
+// monthFormatMessage reports a month that is not written as MM-YYYY.
+const monthFormatMessage = "must be in MM-YYYY format"
+
 func (b *body) month(name string) (domain.MonthYear, bool) {
-	s, ok := b.str(name, "must be in MM-YYYY format")
+	s, ok := b.str(name, monthFormatMessage)
 	if !ok {
 		return domain.MonthYear{}, false
 	}
+	m, message, ok := parseMonth(s)
+	if !ok {
+		b.fail(name, message)
+	}
+	return m, ok
+}
+
+// parseMonth reads a month written as MM-YYYY, for the body and the query
+// alike, so both report the same mistakes the same way. It returns the month,
+// or false and the message that says what is wrong.
+func parseMonth(s string) (domain.MonthYear, string, bool) {
 	if !monthFormat.MatchString(s) {
-		b.fail(name, "must be in MM-YYYY format")
-		return domain.MonthYear{}, false
+		return domain.MonthYear{}, monthFormatMessage, false
 	}
 	// The format guarantees both are digits.
 	month, _ := strconv.Atoi(s[:2])
 	year, _ := strconv.Atoi(s[3:])
 	m, err := domain.NewMonthYear(year, time.Month(month))
 	if err != nil {
-		b.fail(name, monthMessage(err))
-		return domain.MonthYear{}, false
+		return domain.MonthYear{}, monthMessage(err), false
 	}
-	return m, true
+	return m, "", true
 }
 
 func monthMessage(err error) string {

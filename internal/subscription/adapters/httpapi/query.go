@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -92,6 +93,22 @@ func (p *params) userID(name, s string) domain.UserID {
 	return u
 }
 
+// month reads a required month parameter, written as MM-YYYY.
+func (p *params) month(name string) (domain.MonthYear, bool) {
+	s, ok := p.get(name)
+	if !ok {
+		// get has already reported an empty or repeated value, and fail keeps
+		// the first error, so this reports only an absent parameter.
+		p.fail(name, "is required")
+		return domain.MonthYear{}, false
+	}
+	m, message, ok := parseMonth(s)
+	if !ok {
+		p.fail(name, message)
+	}
+	return m, ok
+}
+
 // integer reads an integer parameter within [lowest, highest], or returns
 // fallback when it is absent.
 func (p *params) integer(name string, lowest, highest, fallback int, message string) int {
@@ -125,6 +142,36 @@ func readList(values url.Values) (domain.ListQuery, []problem.FieldError) {
 		Filter: p.filter(),
 		Limit:  p.integer("limit", 1, maxLimit, defaultLimit, fmt.Sprintf("must be an integer between 1 and %d", maxLimit)),
 		Offset: p.integer("offset", 0, math.MaxInt, 0, "must be a non-negative integer"),
+	}
+	return q, p.fieldErrors()
+}
+
+// readTotalCost validates the parameters of a total-cost request. An inverted
+// period is reported on to, and only when both months are valid, so that one
+// mistake gives one error.
+func readTotalCost(values url.Values) (domain.TotalCostQuery, []problem.FieldError) {
+	p := newParams(values, "user_id", "service_name", "from", "to")
+	filter := p.filter()
+	from, fromOK := p.month("from")
+	to, toOK := p.month("to")
+	if !fromOK || !toOK {
+		return domain.TotalCostQuery{}, p.fieldErrors()
+	}
+
+	period, err := domain.NewCalculationPeriod(from, to)
+	if errors.Is(err, domain.ErrInvertedCalculationPeriod) {
+		p.fail("to", "must not be before from")
+		return domain.TotalCostQuery{}, p.fieldErrors()
+	}
+	// Two valid months make no other error possible, but one is reported
+	// rather than ignored.
+	if err != nil {
+		p.fail("from", monthMessage(err))
+		return domain.TotalCostQuery{}, p.fieldErrors()
+	}
+	q, err := domain.NewTotalCostQuery(filter, period)
+	if err != nil {
+		p.fail("from", monthMessage(err))
 	}
 	return q, p.fieldErrors()
 }
