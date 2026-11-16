@@ -32,7 +32,7 @@ Stack: Go, PostgreSQL (17 or later, which the `pg_c_utf8` collation requires), D
 - `internal/subscription/adapters/httpapi`: parses and validates raw input, calls the application, and maps errors to problem+json.
 - `internal/subscription/adapters/postgres`: the only code that talks to the database. It implements the domain ports.
 - `internal/shared/valueobject`: value objects every bounded context may use, such as `ID[K]`, the typed identifier. Only value objects: no serialization, no helpers. Standard library and uuid only. A new identifier is an unexported kind, an alias and a constructor (see `subscription_id.go`).
-- `internal/platform/*`: domain-neutral config, logger, Postgres pool and migrations, problem+json, and the HTTP server.
+- `internal/platform/*`: domain-neutral config, logger, Postgres pool and migrations, problem+json, strict reading of a JSON object body (`jsonbody`), and the HTTP server.
 - `migrations/`: SQL migrations.
 
 Dependencies flow `httpapi → application → domain ← postgres`, and the domain may use `internal/shared`. Adapters may use `platform`. `platform` never imports `internal/subscription` or `internal/shared`. The application and the adapters never import `internal/shared` either: they create identifiers through the domain's constructors, such as `NewUserID`. depguard enforces this in CI. Details: design §3.

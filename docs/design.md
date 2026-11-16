@@ -326,7 +326,8 @@ The total-cost path does not collide with the `{id}` path. The standard router i
 **Body structure.** These fail with a single error and no field list:
 - malformed JSON;
 - a body that is not a JSON object (for example an array, a string, or an empty body);
-- trailing data after the object.
+- trailing data after the object;
+- a body that cannot be read, such as a broken chunked encoding or a client too slow for the read timeout. The server only reads what the client sends, so this is the client's fault: 400 `request body could not be read`. Like every client error, it is logged only by the request log line (§8).
 
 **Field errors.** Otherwise, validation reports **every** field error in one response, ordered by the schema's field order (`service_name`, `price`, `user_id`, `start_date`, `end_date`), followed by unknown fields and then duplicate fields, each in alphabetical order. The same mistakes therefore always produce the same response, whatever order the client used. A duplicated field's value is not validated, because it is unclear which copy counts.
 
@@ -392,7 +393,7 @@ Every error response is RFC 9457 `application/problem+json`, including responses
 | Cause | Status | Detail |
 |---|---|---|
 | Field validation, including the domain's "invalid data" errors | 400 | request validation failed + field errors |
-| Malformed JSON, a body that is not an object, trailing data | 400 | a description of the structural problem |
+| Malformed JSON, a body that is not an object, trailing data, a body that cannot be read | 400 | a description of the structural problem |
 | Body over 1 MiB | 413 | request body too large |
 | Content type other than JSON, or missing | 415 | Content-Type must be application/json |
 | Subscription not found | 404 | subscription not found |
@@ -810,7 +811,7 @@ While this document is a draft, every decision is written in its final form wher
 | 77 | Canonical UUIDs | Every UUID the API reads (path, body, query) must be canonical: 36 characters, `8-4-4-4-12`, hex in either case; other forms → 400; responses use lower case (§4.3) |
 | 78 | Status by stage | Domain "invalid data" errors from parsing the request → 400; from the application call, "not found" → 404, an expired deadline → 503, a disconnect → only the request log line, anything else, including "invalid data" → 500; deadline and disconnect read from the request context (§4.4) |
 | 79 | Strict query parsing | The query string is parsed strictly; any parse error → 400 `query string is malformed`; empty → `must not be empty`, repeated → `must not be repeated`; all parameter errors together, in a fixed order (§4.3) |
-| 80 | JSON body reader | The domain-neutral part of strict body decoding (content type, size, structure, duplicate keys) lives in `internal/platform/jsonbody`; field typing and validation stay in the HTTP adapter; unknown and then duplicate fields follow the schema's fields, each in alphabetical order (§3.1, §4.3) |
+| 80 | JSON body reader | The domain-neutral part of strict body decoding (content type, size, structure, duplicate keys) lives in `internal/platform/jsonbody`; field typing and validation stay in the HTTP adapter; unknown and then duplicate fields follow the schema's fields, each in alphabetical order; every problem with the body, including one that cannot be read, is a client error from the reader, never a server error (§3.1, §4.3) |
 | 81 | Delete returns the subscription | `Repository.Delete` returns the deleted subscription, through `DELETE … RETURNING`, so the "subscription deleted" event carries the user ID without a second query (§2.5, §8) |
 | 82 | Smoke end to end | The smoke job also requires a documented path and creates a subscription, then reads it back through its `Location` (§10.4) |
 | 83 | Nil-UUID checks in the schema | `id` and `user_id` have CHECK constraints against the nil UUID, repeating the domain's rule; whitespace normalization is deliberately not repeated (§5.1) |

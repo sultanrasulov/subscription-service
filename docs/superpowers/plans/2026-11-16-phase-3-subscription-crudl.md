@@ -201,13 +201,15 @@ Commit: `feat(jsonbody): add strict JSON object reader`
 - The media type, read with `mime.ParseMediaType`, must be `application/json`; parameters such as `charset` are allowed. Anything else, or no header → 415.
 - The body is read through `http.MaxBytesReader` → 413 past the limit.
 - Token by token. A body that is not an object (an empty body included), malformed JSON, or data after the object → 400 with one detail.
+- `Read` returns an `*Error` for every problem with the body, a plain error never. A body that cannot be read at all, such as a broken chunked encoding, is 400 `request body could not be read`: the server only reads what the client sends. The `*Error` keeps the cause in `Err`, behind `Unwrap`, so a caller can still tell what happened.
 - The package knows nothing about subscriptions.
 
 **Done when:** tests cover
 - [ ] every structural case of design §4.3;
 - [ ] a `charset` parameter accepted;
 - [ ] exactly 1 MiB accepted, one byte more → 413;
-- [ ] duplicates.
+- [ ] duplicates;
+- [ ] a body that fails to read, at the start, inside or after the object: 400 that wraps the cause.
 
 **Pitfall (to verify in the task):** the size error can surface from inside the JSON decoder; it is recognized with `errors.As` and `*http.MaxBytesError`.
 
