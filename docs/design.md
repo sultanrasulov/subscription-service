@@ -136,7 +136,7 @@ The domain owns these interfaces, and the Postgres adapter implements them.
 
 | Port | Operations | Errors |
 |---|---|---|
-| Repository | create, get by ID, update, delete by ID, list a page with the total number of matches | not found (get, update, delete) |
+| Repository | create, get by ID, update, delete by ID (returning the deleted subscription), list a page with the total number of matches | not found (get, update, delete) |
 | TotalCostReader | total cost for a total-cost query, as a whole number of rubles | — |
 
 `TotalCostReader` is the read side for the total, a light form of CQRS. The `Reader` suffix says so: the port does not calculate anything in the domain; it reads a sum that the database computes. A single database query computes the sum (§5.4). Integration tests pin down the rule in §2.7.
@@ -197,6 +197,7 @@ subscription-service/
 │       ├── logger/                # structured logging (JSON or text) with request IDs
 │       ├── postgres/              # connection pool and migration runner
 │       ├── problem/               # RFC 9457 problem+json: the one implementation of the error format
+│       ├── jsonbody/              # strict reading of a JSON object body: content type, size, structure, duplicate keys
 │       └── httpserver/            # server, middleware, /health, /ready, Swagger, graceful shutdown
 ├── migrations/                    # versioned SQL migrations, embedded into the binary
 ├── docs/
@@ -325,9 +326,10 @@ The total-cost path does not collide with the `{id}` path. The standard router i
 **Body structure.** These fail with a single error and no field list:
 - malformed JSON;
 - a body that is not a JSON object (for example an array, a string, or an empty body);
-- trailing data after the object.
+- trailing data after the object;
+- a body that cannot be read, such as a broken chunked encoding or a client too slow for the read timeout. The server only reads what the client sends, so this is the client's fault: 400 `request body could not be read`. Like every client error, it is logged only by the request log line (§8).
 
-**Field errors.** Otherwise, validation reports **every** field error in one response, ordered by the schema's field order (`service_name`, `price`, `user_id`, `start_date`, `end_date`), followed by unknown and duplicate fields. The same mistakes therefore always produce the same response, whatever order the client used.
+**Field errors.** Otherwise, validation reports **every** field error in one response, ordered by the schema's field order (`service_name`, `price`, `user_id`, `start_date`, `end_date`), followed by unknown fields and then duplicate fields, each in alphabetical order. The same mistakes therefore always produce the same response, whatever order the client used. A duplicated field's value is not validated, because it is unclear which copy counts.
 
 | Situation | Message |
 |---|---|
@@ -347,24 +349,28 @@ The null rule also needs explanation. In `encoding/json`, a JSON `null` decoded 
 |---|---|---|---|
 | `service_name` | yes | string; normalized, 1–100 characters, valid UTF-8 without control characters | `must not be empty`, `must not contain control characters or invalid UTF-8` |
 | `price` | yes | JSON integer, 0…2147483647; `0` is valid | `must be an integer between 0 and 2147483647` |
-| `user_id` | yes (create only) | UUID, not the nil UUID | `must be a valid UUID` |
+| `user_id` | yes (create only) | UUID in canonical form, not the nil UUID | `must be a valid UUID` |
 | `start_date` | yes | `MM-YYYY`, month 01–12, year 2000–2100 | `must be in MM-YYYY format` |
 | `end_date` | no | same format and range; not before `start_date`; omitted or `null` → open-ended | `must not be before start_date` |
 
-**Path:** a malformed `{id}` → 400 for field `id`.
+**Path:** a malformed `{id}` → 400 for field `id`. It is reported alone, before the body is read: the path names the resource, and a body cannot apply to a resource that is not even named. A valid but unknown ID is checked after the body, by the application: 404.
+
+**UUIDs.** Every UUID the API reads, in the path, the body or the query, must be in the canonical form of RFC 9562: 36 characters, `8-4-4-4-12`, hex digits in either case. The braced, `urn:uuid:` and 32-digit forms that UUID libraries also accept → 400, so one resource has one URL. Responses always use lower case.
 
 **Query parameters** (list and total cost):
+- The query string is parsed strictly. A malformed one, such as an invalid escape (`%zz`) or a `;` separator → 400 `query string is malformed`. Lenient parsing drops the broken pair silently, so a filter would vanish and a list would include every user's subscriptions.
 - An absent parameter means no filter.
-- A parameter that is present but empty (`?user_id=`) → 400.
-- A repeated parameter → 400.
+- A parameter that is present but empty (`?user_id=`) → 400 `must not be empty`.
+- A repeated parameter → 400 `must not be repeated`.
+- Every parameter error is reported in one response, in a fixed order: `user_id`, `service_name`, then the parameters of the endpoint (`limit`, `offset` for a list), so the same mistakes always give the same response.
 - Unknown parameters are ignored, because proxies and tracking tools add them (`utm_*`, `_=`).
-- `user_id` follows the `UserID` rules: a valid, non-nil UUID.
+- `user_id` follows the `UserID` rules: a canonical, non-nil UUID.
 - `service_name` is normalized like stored names and matched against them case-insensitively.
 - Total cost only: `from` and `to` are required, use `MM-YYYY` with years 2000–2100 (the same `MonthYear` rules as stored dates), and must satisfy `from ≤ to`. Otherwise → 400, reported on field `to` for an inverted period.
 
 **Pagination** (list only):
-- `limit` defaults to 20 and must be an integer from 1 to 100. Anything else → 400; values above 100 are not silently capped.
-- `offset` defaults to 0 and must be an integer ≥ 0. Anything else → 400.
+- `limit` defaults to 20 and must be an integer from 1 to 100. Anything else → 400 `must be an integer between 1 and 100`; values above 100 are not silently capped.
+- `offset` defaults to 0 and must be an integer ≥ 0. Anything else → 400 `must be a non-negative integer`.
 - Results are ordered by ID. IDs are UUID v7, so the order is stable across pages and roughly follows creation time. It is strictly monotonic only within one process; IDs created in the same millisecond by different processes may interleave.
 
 ### 4.4 Errors
@@ -387,7 +393,7 @@ Every error response is RFC 9457 `application/problem+json`, including responses
 | Cause | Status | Detail |
 |---|---|---|
 | Field validation, including the domain's "invalid data" errors | 400 | request validation failed + field errors |
-| Malformed JSON, a body that is not an object, trailing data | 400 | a description of the structural problem |
+| Malformed JSON, a body that is not an object, trailing data, a body that cannot be read | 400 | a description of the structural problem |
 | Body over 1 MiB | 413 | request body too large |
 | Content type other than JSON, or missing | 415 | Content-Type must be application/json |
 | Subscription not found | 404 | subscription not found |
@@ -398,7 +404,13 @@ Every error response is RFC 9457 `application/problem+json`, including responses
 
 **Request deadline.** The server's write timeout closes the connection, but it does not cancel the handler's context. A hung database query would keep running after the client is gone. Middleware therefore gives every request a context with a deadline (`HTTP_REQUEST_TIMEOUT`). That context reaches pgx, so a hung query is canceled, and the client receives a 503 problem+json instead of a dropped connection. 503 is also what the standard library's timeout handler uses. 504 is meant for gateways waiting on an upstream server.
 
-**Client disconnects.** When the client goes away, the request context is canceled. That is not a server failure, so it is logged at WARN level and is not counted as a 500.
+**Status by stage.** The HTTP adapter builds every value object from the request before it calls the application, so the stage an error comes from decides its status:
+- parsing the request: the domain's "invalid data" errors → 400 with field errors;
+- calling the application: "not found" → 404; an expired request deadline → 503; a client that went away → nothing more to send; anything else → 500, including an "invalid data" error. Valid input cannot produce one there, so it comes from a stored record that breaks an invariant, which is a server fault.
+
+The deadline and the disconnect are told apart by the request context's error, not by the error chain, so the result does not depend on how the database driver wraps context errors.
+
+**Client disconnects.** When the client goes away, the request context is canceled. That is not a server failure, so it is not counted as a 500. It is logged once, by the request log line at WARN with status 499 (§8); the HTTP adapter does not log it again.
 
 **One implementation of the format.** Two places write problem+json:
 - the HTTP server: router errors and panics;
@@ -425,8 +437,8 @@ The standard router answers unmatched routes and wrong methods in plain text. A 
 
 | Column | Type | Null | Rule |
 |---|---|---|---|
-| `id` | UUID | no | Primary key. No database default: the application is the only source of IDs, so a missing ID fails loudly |
-| `user_id` | UUID | no | |
+| `id` | UUID | no | Primary key; not the nil UUID. No database default: the application is the only source of IDs, so a missing ID fails loudly |
+| `user_id` | UUID | no | Not the nil UUID |
 | `service_name` | text, collation `pg_c_utf8` | no | 1–100 characters (§5.2); no control characters (§2.2) |
 | `price` | integer | no | ≥ 0 |
 | `start_date` | date | no | The 1st of a month, within 2000-01 … 2100-12 |
@@ -436,6 +448,7 @@ The standard router answers unmatched routes and wrong methods in plain text. A 
 
 - A month is stored as a date on the 1st of that month, so values order and compare correctly. This fixes the earlier draft, which stored `MM-YYYY` strings.
 - Database constraints repeat the domain rules as a last line of defense.
+- Whitespace normalization of the service name is deliberately not repeated. It is a transformation the domain applies, and a CHECK would need a second definition of Unicode whitespace in SQL that nothing keeps in step with Go's. A blank name that bypassed the domain fails when it is loaded (§2.3); an unnormalized one is normalized then.
 - `created_at` and `updated_at` exist for operations only. Neither the domain nor the API uses them.
 - **Indexes:** on `user_id`, and on the lower-cased `service_name` for case-insensitive matching.
 
@@ -626,7 +639,7 @@ The workflow runs on pushes to `main` and on pull requests to `main`, so every p
 |---|---|
 | lint | golangci-lint at the version in `.golangci-lint-version`. It must be built with a Go version ≥ the module's `go` directive, so a Go update moves this pin too |
 | test | All tests, including integration tests on the runner's Docker |
-| smoke | Start the compose stack and wait until it is healthy. Check that `/health` and `/ready` return 200 and that `/swagger/doc.json` is a Swagger 2.0 document. From phase 3, also require at least one documented path. Phase 1 has no endpoints yet, and `/health` and `/ready` are not in Swagger, so that check would fail there. Stop the app and require exit 0: an entrypoint that leaves a shell as PID 1 does not forward SIGTERM, so Docker kills the app with 137, and a broken shutdown exits non-zero. Print the logs on failure; tear down |
+| smoke | Start the compose stack and wait until it is healthy. Check that `/health` and `/ready` return 200 and that `/swagger/doc.json` is a Swagger 2.0 document. From phase 3, also require at least one documented path, then create a subscription with POST and read it back with GET through its `Location`, the one end-to-end check of the built image against a real database. Phase 1 has no endpoints yet, and `/health` and `/ready` are not in Swagger, so that check would fail there. Stop the app and require exit 0: an entrypoint that leaves a shell as PID 1 does not forward SIGTERM, so Docker kills the app with 137, and a broken shutdown exits non-zero. Print the logs on failure; tear down |
 
 Every action is pinned to a full commit SHA, with its version in a comment. GitHub's security hardening guide names the full SHA as the only immutable reference to an action, and Dependabot updates both the SHA and the comment.
 
@@ -741,7 +754,7 @@ While this document is a draft, every decision is written in its final form wher
 | 20 | Total-cost response | `{"total_cost": N}` only; no matches → 0 |
 | 21 | Status codes | 201 + `Location` / 200 / 204 / 400 / 404 / 405 / 413 / 415 / 503 (request deadline); 500 without internals |
 | 22 | Deletion | Physical |
-| 23 | Schema | Month stored as a date on the 1st, database constraints, indexes on `user_id` and lower-cased `service_name` |
+| 23 | Schema | Month stored as a date on the 1st, database constraints, indexes on `user_id` and lower-cased `service_name` *(Nil-UUID checks added by #83.)* |
 | 24 | Migrations | Embedded, applied at startup (golang-migrate, pgx v5); explicit `BEGIN … COMMIT` in every file |
 | 25 | Database access | Hand-written SQL on pgx v5 |
 | 26 | Collation | `pg_c_utf8` on the `service_name` column and on the filter value in queries; compose needs no initdb locale settings; tests deliberately run on a UTF8 database with the `C` locale to prove the result does not depend on the locale; a non-UTF8 database fails the first migration by design |
@@ -752,7 +765,7 @@ While this document is a draft, every decision is written in its final form wher
 | 31 | Logging | slog JSON, request middleware, each error logged once. *(Format made selectable by #65.)* |
 | 32 | Versions | Minimums only: Go 1.27, PostgreSQL 17 (`pg_c_utf8`). Exact versions live only in `go.mod`, `Dockerfile` and `compose.yaml`. Alpine build image with `make`, Alpine runtime. *(List of version files amended by #63.)* |
 | 33 | Tests | Domain unit tests, HTTP tests, testcontainers |
-| 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) *(graceful stop added by #73.)* |
+| 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) *(graceful stop added by #73; documented path and create → get added by #82.)* |
 | 35 | Spec | `docs/design.md`, no code: intent, rules and decisions |
 | 36 | Branches | One short-lived branch per phase, named `type/short-description` (lowercase, hyphens, no ticket ID). One pull request per phase, merged into `main` with a merge commit (no squash) when CI is green. Phase 0, which has no CI yet, merges after the spec is approved. *(Phase 0 clause amended by #62.)* |
 | 37 | Module | `github.com/sultanrasulov/subscription-service` |
@@ -763,7 +776,7 @@ While this document is a draft, every decision is written in its final form wher
 | 42 | Open-ended in responses | `end_date` omitted; on input, `null` equals absence |
 | 43 | Body size | Over 1 MiB → 413 |
 | 44 | User ID | `UserID` value object; the nil UUID is rejected in bodies and filters *(Built on the shared typed identifier by #76.)* |
-| 45 | Body decoding | Strict token-by-token decoding with the stable `encoding/json`; structural problems → one error; otherwise all field errors in schema order; duplicate keys rejected; `null` in a required field = missing |
+| 45 | Body decoding | Strict token-by-token decoding with the stable `encoding/json`; structural problems → one error; otherwise all field errors in schema order; duplicate keys rejected; `null` in a required field = missing *(Reader placed in `platform/jsonbody`, and the order of unknown and duplicate fields fixed, by #80.)* |
 | 46 | Query parameters | Repeated → 400; unknown → ignored |
 | 47 | SQL filter | Conditions only for filters that are set; one builder for list and total cost; bound parameters only |
 | 48 | Overflow | Price widened to 64 bits; total cast back to 64 bits so overflow fails loudly → 500 |
@@ -795,3 +808,10 @@ While this document is a draft, every decision is written in its final form wher
 | 74 | Pre-commit hooks | Opt-in pre-commit hooks: the standard whitespace, YAML, conflict, large-file, private-key and no-commit-to-`main` checks, then `go mod tidy -diff` and `make lint`; no tests. Hook repositories pinned by SHA with a frozen comment and updated by Dependabot. A local convenience; CI remains the gate (§10.1, §10.5) |
 | 75 | Service name characters | After normalization, a service name must be valid UTF-8 with no control characters; otherwise 400 on the field, instead of a 500 from the database rejecting NUL or invalid UTF-8; the database repeats it with a CHECK constraint in a new migration (§2.2, §5.1) |
 | 76 | Typed identifiers | `SubscriptionID` and `UserID` are aliases of one generic `valueobject.ID[K]`, each with an unexported kind of its own, so neither can be passed as the other; `NewID` rejects the nil UUID. The package is `internal/shared/valueobject`: it admits only value objects that every bounded context may use, depends only on the standard library and a UUID library, and has no serialization; platform must not import it, and the application and the adapters never import it either: they create identifiers through the domain's constructors (§2.2, §3.1, §3.2) |
+| 77 | Canonical UUIDs | Every UUID the API reads (path, body, query) must be canonical: 36 characters, `8-4-4-4-12`, hex in either case; other forms → 400; responses use lower case (§4.3) |
+| 78 | Status by stage | Domain "invalid data" errors from parsing the request → 400; from the application call, "not found" → 404, an expired deadline → 503, a disconnect → only the request log line, anything else, including "invalid data" → 500; deadline and disconnect read from the request context (§4.4) |
+| 79 | Strict query parsing | The query string is parsed strictly; any parse error → 400 `query string is malformed`; empty → `must not be empty`, repeated → `must not be repeated`; all parameter errors together, in a fixed order (§4.3) |
+| 80 | JSON body reader | The domain-neutral part of strict body decoding (content type, size, structure, duplicate keys) lives in `internal/platform/jsonbody`; field typing and validation stay in the HTTP adapter; unknown and then duplicate fields follow the schema's fields, each in alphabetical order; every problem with the body, including one that cannot be read, is a client error from the reader, never a server error (§3.1, §4.3) |
+| 81 | Delete returns the subscription | `Repository.Delete` returns the deleted subscription, through `DELETE … RETURNING`, so the "subscription deleted" event carries the user ID without a second query (§2.5, §8) |
+| 82 | Smoke end to end | The smoke job also requires a documented path and creates a subscription, then reads it back through its `Location` (§10.4) |
+| 83 | Nil-UUID checks in the schema | `id` and `user_id` have CHECK constraints against the nil UUID, repeating the domain's rule; whitespace normalization is deliberately not repeated (§5.1) |

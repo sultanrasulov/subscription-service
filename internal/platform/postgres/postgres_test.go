@@ -2,19 +2,17 @@ package postgres
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
-	"flag"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,59 +26,7 @@ import (
 var server config.Postgres
 
 func TestMain(m *testing.M) {
-	flag.Parse()
-	if testing.Short() {
-		os.Exit(m.Run())
-	}
-
-	ctx := context.Background()
-	cfg, stop, err := pgtest.Start(ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	server = cfg
-
-	code := m.Run()
-	if err := stop(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "stop postgres container:", err)
-	}
-	os.Exit(code)
-}
-
-// databases numbers the databases freshDB creates.
-var databases atomic.Int64
-
-// freshDB creates an empty database in the test container, with the given
-// encoding, and drops it when the test ends. Each test gets its own database,
-// so tests stay independent and can run in parallel.
-func freshDB(t *testing.T, encoding string) config.Postgres {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("integration test: needs Docker")
-	}
-
-	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, server.ConnString())
-	if err != nil {
-		t.Fatalf("connect as admin: %v", err)
-	}
-	t.Cleanup(admin.Close)
-
-	name := fmt.Sprintf("test_%d", databases.Add(1))
-	if _, err := admin.Exec(ctx, fmt.Sprintf(
-		"CREATE DATABASE %s TEMPLATE template0 ENCODING '%s' LOCALE 'C'", name, encoding)); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() {
-		if _, err := admin.Exec(ctx, "DROP DATABASE "+name+" WITH (FORCE)"); err != nil {
-			t.Errorf("drop database %s: %v", name, err)
-		}
-	})
-
-	cfg := server
-	cfg.Database = name
-	return cfg
+	os.Exit(pgtest.Main(m, &server))
 }
 
 // newPool opens a pool on cfg and closes it when the test ends.
@@ -257,7 +203,7 @@ func listenerPort(t *testing.T, ln net.Listener) int {
 func TestNewPool_ConnectsAndPings(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	if err := pool.Ping(t.Context()); err != nil {
 		t.Errorf("Ping() error = %v", err)
 	}
@@ -269,7 +215,7 @@ func TestNewPool_ConnectsAndPings(t *testing.T) {
 func TestNewPool_FailsOnWrongPassword(t *testing.T) {
 	t.Parallel()
 
-	cfg := freshDB(t, "UTF8")
+	cfg := pgtest.NewDatabase(t, server, "UTF8")
 	cfg.Password = "wrong-password"
 	_, err := NewPool(t.Context(), cfg)
 	if err == nil {
@@ -283,7 +229,7 @@ func TestNewPool_FailsOnWrongPassword(t *testing.T) {
 func TestMigrate_AppliesSchemaAndIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	var logs bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&logs, nil))
 
@@ -298,7 +244,7 @@ func TestMigrate_AppliesSchemaAndIsIdempotent(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("want 2 log lines, got:\n%s", logs.String())
 	}
-	for i, want := range [][2]float64{{0, 1}, {1, 1}} {
+	for i, want := range [][2]float64{{0, 2}, {2, 2}} {
 		var line map[string]any
 		if err := json.Unmarshal([]byte(lines[i]), &line); err != nil {
 			t.Fatalf("log line %d: %v", i, err)
@@ -333,7 +279,7 @@ func TestMigrate_AppliesSchemaAndIsIdempotent(t *testing.T) {
 func TestMigrate_DownThenUpAgain(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	if err := Migrate(t.Context(), pool, migrations.FS, discardLogger()); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
@@ -342,11 +288,14 @@ func TestMigrate_DownThenUpAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMigrator() error = %v", err)
 	}
-	if err := m.Down(); err != nil {
-		t.Fatalf("Down() error = %v", err)
-	}
+	// Closed before the error is checked: an open migrator holds a pool
+	// connection, and the pool.Close() of the cleanup would then block forever.
+	downErr := m.Down()
 	if err := closeAll(); err != nil {
 		t.Fatalf("close the migrator: %v", err)
+	}
+	if downErr != nil {
+		t.Fatalf("Down() error = %v", downErr)
 	}
 	if tableExists(t, pool) {
 		t.Fatal("subscriptions still exists after Down()")
@@ -358,6 +307,93 @@ func TestMigrate_DownThenUpAgain(t *testing.T) {
 	if !tableExists(t, pool) {
 		t.Fatal("subscriptions is missing after Migrate()")
 	}
+}
+
+// Every down migration must undo exactly what its up migration did. A full
+// Down hides a later down that forgets something, because the first down drops
+// the whole table; stepping down part of the way and up again does not. The
+// schema is then compared whole, so a down that drops too much fails as well:
+// the up migrations would not restore what it removed.
+func TestMigrate_StepsDownThenUpAgain(t *testing.T) {
+	t.Parallel()
+
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
+	if err := Migrate(t.Context(), pool, migrations.FS, discardLogger()); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	latest := migrationVersion(t, pool)
+	want := schemaSnapshot(t, pool)
+
+	for steps := 1; steps <= int(latest); steps++ {
+		m, closeAll, err := newMigrator(pool, migrations.FS)
+		if err != nil {
+			t.Fatalf("newMigrator() error = %v", err)
+		}
+		// Closed before the error is checked: an open migrator holds a pool
+		// connection, and the pool.Close() of the cleanup would then block
+		// forever.
+		stepErr := m.Steps(-steps)
+		if err := closeAll(); err != nil {
+			t.Fatalf("close the migrator: %v", err)
+		}
+		if stepErr != nil {
+			t.Fatalf("Steps(-%d) error = %v", steps, stepErr)
+		}
+		if err := Migrate(t.Context(), pool, migrations.FS, discardLogger()); err != nil {
+			t.Fatalf("Migrate() after %d steps down error = %v", steps, err)
+		}
+		if got := schemaSnapshot(t, pool); !slices.Equal(got, want) {
+			t.Fatalf("schema after %d steps down and up:\n%s\nwant:\n%s",
+				steps, strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
+}
+
+// schemaSnapshot describes every column, constraint and index of the public
+// schema, except golang-migrate's own table, as sorted lines.
+func schemaSnapshot(t *testing.T, pool *pgxpool.Pool) []string {
+	t.Helper()
+	rows, err := pool.Query(t.Context(), `
+		SELECT format('column %s.%s %s null=%s default=%s collation=%s',
+			table_name, column_name, data_type, is_nullable,
+			coalesce(column_default, '-'), coalesce(collation_name, '-'))
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name <> 'schema_migrations'
+		UNION ALL
+		SELECT format('constraint %s.%s %s', c.conrelid::regclass, c.conname, pg_get_constraintdef(c.oid))
+		FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+		WHERE n.nspname = 'public' AND c.conrelid <> 'schema_migrations'::regclass
+		UNION ALL
+		SELECT format('index %s', indexdef)
+		FROM pg_indexes
+		WHERE schemaname = 'public' AND tablename <> 'schema_migrations'
+		ORDER BY 1`)
+	if err != nil {
+		t.Fatalf("read the schema: %v", err)
+	}
+	lines, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("read the schema: %v", err)
+	}
+	return lines
+}
+
+func migrationVersion(t *testing.T, pool *pgxpool.Pool) uint {
+	t.Helper()
+	m, closeAll, err := newMigrator(pool, migrations.FS)
+	if err != nil {
+		t.Fatalf("newMigrator() error = %v", err)
+	}
+	defer func() {
+		if err := closeAll(); err != nil {
+			t.Errorf("close the migrator: %v", err)
+		}
+	}()
+	version, _, err := m.Version()
+	if err != nil {
+		t.Fatalf("Version() error = %v", err)
+	}
+	return version
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool) bool {
@@ -374,7 +410,7 @@ func tableExists(t *testing.T, pool *pgxpool.Pool) bool {
 func TestMigrate_LeavesPoolClosable(t *testing.T) {
 	t.Parallel()
 
-	pool, err := NewPool(t.Context(), freshDB(t, "UTF8"))
+	pool, err := NewPool(t.Context(), pgtest.NewDatabase(t, server, "UTF8"))
 	if err != nil {
 		t.Fatalf("NewPool() error = %v", err)
 	}
@@ -399,7 +435,7 @@ func TestMigrate_LeavesPoolClosable(t *testing.T) {
 func TestMigrate_FailsOnNonUTF8Database(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "SQL_ASCII"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "SQL_ASCII"))
 	err := Migrate(t.Context(), pool, migrations.FS, discardLogger())
 	if err == nil {
 		t.Fatal("Migrate() error = nil, want an error")
@@ -419,33 +455,39 @@ func TestMigrate_FailsOnNonUTF8Database(t *testing.T) {
 func TestSchema_RejectsInvalidRows(t *testing.T) {
 	t.Parallel()
 
-	pool := newPool(t, freshDB(t, "UTF8"))
+	pool := newPool(t, pgtest.NewDatabase(t, server, "UTF8"))
 	if err := Migrate(t.Context(), pool, migrations.FS, discardLogger()); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 
+	const nilUUID = "00000000-0000-0000-0000-000000000000"
 	tests := []struct {
 		name       string
+		id, userID any // nil: a fresh random UUID
 		service    string
 		price      int
 		start, end any
 		constraint string
 	}{
-		{"negative price", "Netflix", -1, "2025-07-01", nil, "subscriptions_price_non_negative"},
-		{"empty name", "", 400, "2025-07-01", nil, "subscriptions_service_name_length"},
-		{"name of 101 runes", strings.Repeat("я", 101), 400, "2025-07-01", nil, "subscriptions_service_name_length"},
-		{"start not on the 1st", "Netflix", 400, "2025-07-15", nil, "subscriptions_start_date_month"},
-		{"start before 2000", "Netflix", 400, "1999-12-01", nil, "subscriptions_start_date_month"},
-		{"end not on the 1st", "Netflix", 400, "2025-07-01", "2025-08-15", "subscriptions_end_date_month"},
-		{"end after 2100", "Netflix", 400, "2025-07-01", "2101-01-01", "subscriptions_end_date_month"},
-		{"end before start", "Netflix", 400, "2025-07-01", "2025-06-01", "subscriptions_end_not_before_start"},
+		{"negative price", nil, nil, "Netflix", -1, "2025-07-01", nil, "subscriptions_price_non_negative"},
+		{"empty name", nil, nil, "", 400, "2025-07-01", nil, "subscriptions_service_name_length"},
+		{"name of 101 runes", nil, nil, strings.Repeat("я", 101), 400, "2025-07-01", nil, "subscriptions_service_name_length"},
+		{"escape in the name", nil, nil, "Yandex\x1bPlus", 400, "2025-07-01", nil, "subscriptions_service_name_no_control"},
+		{"delete in the name", nil, nil, "Yandex\x7fPlus", 400, "2025-07-01", nil, "subscriptions_service_name_no_control"},
+		{"nil id", nilUUID, nil, "Netflix", 400, "2025-07-01", nil, "subscriptions_id_not_nil"},
+		{"nil user id", nil, nilUUID, "Netflix", 400, "2025-07-01", nil, "subscriptions_user_id_not_nil"},
+		{"start not on the 1st", nil, nil, "Netflix", 400, "2025-07-15", nil, "subscriptions_start_date_month"},
+		{"start before 2000", nil, nil, "Netflix", 400, "1999-12-01", nil, "subscriptions_start_date_month"},
+		{"end not on the 1st", nil, nil, "Netflix", 400, "2025-07-01", "2025-08-15", "subscriptions_end_date_month"},
+		{"end after 2100", nil, nil, "Netflix", 400, "2025-07-01", "2101-01-01", "subscriptions_end_date_month"},
+		{"end before start", nil, nil, "Netflix", 400, "2025-07-01", "2025-06-01", "subscriptions_end_not_before_start"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := pool.Exec(t.Context(), `INSERT INTO subscriptions
 				(id, user_id, service_name, price, start_date, end_date)
-				VALUES (gen_random_uuid(), gen_random_uuid(), $1, $2, $3, $4)`,
-				tc.service, tc.price, tc.start, tc.end)
+				VALUES (coalesce($5::uuid, gen_random_uuid()), coalesce($6::uuid, gen_random_uuid()), $1, $2, $3, $4)`,
+				tc.service, tc.price, tc.start, tc.end, tc.id, tc.userID)
 			var pgErr *pgconn.PgError
 			if !errors.As(err, &pgErr) {
 				t.Fatalf("insert error = %v, want a check violation", err)
@@ -464,4 +506,20 @@ func TestSchema_RejectsInvalidRows(t *testing.T) {
 			t.Errorf("insert error = %v, want the row accepted", err)
 		}
 	})
+
+	// A no-break space is whitespace, not a control character. Even a name of
+	// nothing else is accepted: whitespace normalization is the domain's, and
+	// the schema deliberately does not repeat it.
+	for name, service := range map[string]string{
+		"no-break space inside a Cyrillic name": "Яндекс\u00a0Плюс",
+		"name of only a no-break space":         "\u00a0",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := pool.Exec(t.Context(), `INSERT INTO subscriptions
+				(id, user_id, service_name, price, start_date)
+				VALUES (gen_random_uuid(), gen_random_uuid(), $1, 400, '2025-07-01')`, service); err != nil {
+				t.Errorf("insert error = %v, want the row accepted", err)
+			}
+		})
+	}
 }

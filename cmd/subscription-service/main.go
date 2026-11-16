@@ -27,6 +27,9 @@ import (
 	"github.com/sultanrasulov/subscription-service/internal/platform/httpserver"
 	"github.com/sultanrasulov/subscription-service/internal/platform/logger"
 	"github.com/sultanrasulov/subscription-service/internal/platform/postgres"
+	"github.com/sultanrasulov/subscription-service/internal/subscription/adapters/httpapi"
+	subscriptionpostgres "github.com/sultanrasulov/subscription-service/internal/subscription/adapters/postgres"
+	"github.com/sultanrasulov/subscription-service/internal/subscription/application"
 	"github.com/sultanrasulov/subscription-service/migrations"
 )
 
@@ -77,11 +80,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("open the swagger directory: %w", err)
 	}
+	// The subscription context, from the database inward and back out to HTTP.
+	repo := subscriptionpostgres.NewRepository(pool)
+	api := httpapi.New(application.NewService(repo, log), log)
+
 	handler := httpserver.NewHandler(httpserver.Options{
 		Logger:         log,
 		Ready:          pool.Ping,
 		Swagger:        spec,
 		RequestTimeout: cfg.HTTP.RequestTimeout,
+		Register:       api.Register,
 	})
 
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.HTTP.Addr)

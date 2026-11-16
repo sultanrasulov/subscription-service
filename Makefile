@@ -6,8 +6,9 @@ GOLANGCI_LINT_VERSION := $(shell cat .golangci-lint-version)
 # Installed once under a versioned name: later runs need no network, and a new
 # version in .golangci-lint-version is a new file name, so make installs it.
 GOLANGCI_LINT := bin/golangci-lint-$(GOLANGCI_LINT_VERSION)
-# swag fails on a directory that does not exist yet; phase 3 adds the HTTP adapter.
-SWAG_DIRS := ./cmd/subscription-service
+# swag reads the general API info from main.go, the endpoints from the HTTP
+# adapter, and the error schema from the problem package.
+SWAG_DIRS := ./cmd/subscription-service,./internal/subscription/adapters/httpapi,./internal/platform/problem
 
 .PHONY: help swagger build db run up down logs test test-unit lint pre-commit-install pre-commit-run
 
