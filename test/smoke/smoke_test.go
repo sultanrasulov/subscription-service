@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,15 +62,78 @@ func TestSmoke_OperationalRoutes(t *testing.T) {
 		t.Fatalf("GET /swagger/doc.json status = %d, want 200; body %s", status, body)
 	}
 	var spec struct {
-		Swagger string         `json:"swagger"`
-		Paths   map[string]any `json:"paths"`
+		Swagger  string                     `json:"swagger"`
+		BasePath string                     `json:"basePath"`
+		Paths    map[string]json.RawMessage `json:"paths"`
 	}
 	if err := json.Unmarshal(body, &spec); err != nil {
 		t.Fatalf("decode the specification: %v", err)
 	}
-	if spec.Swagger != "2.0" || len(spec.Paths) == 0 {
-		t.Errorf("specification = Swagger %q with %d paths, want Swagger 2.0 with at least one path", spec.Swagger, len(spec.Paths))
+	if spec.Swagger != "2.0" || spec.BasePath != "/api/v1" {
+		t.Errorf("specification = Swagger %q with base path %q, want Swagger 2.0 with /api/v1", spec.Swagger, spec.BasePath)
 	}
+	missing, unexpected := compare(wantOperations, operations(t, spec.Paths))
+	if len(missing) > 0 || len(unexpected) > 0 {
+		t.Errorf("documented operations: missing %q, unexpected %q", missing, unexpected)
+	}
+}
+
+// wantOperations are the operations the API serves. swag leaves out a handler
+// whose @Router line is lost, without a warning, so only a check of the built
+// specification notices an operation leaving it.
+var wantOperations = []string{
+	"POST /subscriptions",
+	"GET /subscriptions",
+	"GET /subscriptions/total-cost",
+	"GET /subscriptions/{id}",
+	"PUT /subscriptions/{id}",
+	"DELETE /subscriptions/{id}",
+}
+
+// operationKeys are the keys of a Swagger 2.0 path item that name an operation.
+// Its other keys, parameters, $ref and x- extensions, are not operations.
+var operationKeys = map[string]bool{
+	"get": true, "put": true, "post": true, "delete": true, "options": true, "head": true, "patch": true,
+}
+
+// operations lists a specification's operations as "METHOD path". Only a key
+// that starts with "/" is a path: the paths object may also hold x- extensions.
+func operations(t *testing.T, paths map[string]json.RawMessage) []string {
+	t.Helper()
+	var ops []string
+	for path, raw := range paths {
+		if !strings.HasPrefix(path, "/") {
+			continue
+		}
+		var item map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatalf("decode the path item %s: %v", path, err)
+		}
+		for key := range item {
+			if operationKeys[key] {
+				ops = append(ops, strings.ToUpper(key)+" "+path)
+			}
+		}
+	}
+	return ops
+}
+
+// compare returns what want has and got lacks, and what got has and want
+// lacks, each sorted.
+func compare(want, got []string) (missing, unexpected []string) {
+	for _, s := range want {
+		if !slices.Contains(got, s) {
+			missing = append(missing, s)
+		}
+	}
+	for _, s := range got {
+		if !slices.Contains(want, s) {
+			unexpected = append(unexpected, s)
+		}
+	}
+	slices.Sort(missing)
+	slices.Sort(unexpected)
+	return missing, unexpected
 }
 
 // A subscription created for a user of its own reads back through its
