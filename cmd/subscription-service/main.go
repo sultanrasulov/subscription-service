@@ -7,6 +7,8 @@
 //	@title			Subscription Service API
 //	@version		1.0
 //	@description	Aggregates users' online subscriptions and reports their total cost.
+//	@description	Months are MM-YYYY strings, and money is whole rubles.
+//	@description	Errors are RFC 9457 problem details, sent as application/problem+json; Swagger 2.0 cannot give an error response its own media type, so they are documented as application/json.
 //	@BasePath		/api/v1
 package main
 

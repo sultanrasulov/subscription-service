@@ -25,10 +25,13 @@ import (
 // validation cannot drift apart.
 type createRequest struct {
 	ServiceName string `json:"service_name" validate:"required" maxLength:"100" example:"Yandex Plus"`
-	Price       int64  `json:"price" validate:"required" minimum:"0" maximum:"2147483647" example:"400"`
-	UserID      string `json:"user_id" validate:"required" format:"uuid" example:"60601fee-2bf1-4721-ae6f-7636e79a0cba"`
-	StartDate   string `json:"start_date" validate:"required" example:"07-2025"`
-	EndDate     string `json:"end_date,omitempty" example:"12-2025"`
+	// The monthly price in whole rubles.
+	Price  int64  `json:"price" validate:"required" minimum:"0" maximum:"2147483647" example:"400"`
+	UserID string `json:"user_id" validate:"required" format:"uuid" example:"60601fee-2bf1-4721-ae6f-7636e79a0cba"`
+	// The first month, MM-YYYY.
+	StartDate string `json:"start_date" validate:"required" example:"07-2025"`
+	// The last month, MM-YYYY, inclusive; omitted for an open-ended subscription.
+	EndDate string `json:"end_date,omitempty" example:"12-2025"`
 }
 
 // field is one field of a request body.
@@ -57,9 +60,12 @@ var createSchema = schemaOf[createRequest]()
 // an unknown field.
 type updateRequest struct {
 	ServiceName string `json:"service_name" validate:"required" maxLength:"100" example:"Kinopoisk"`
-	Price       int64  `json:"price" validate:"required" minimum:"0" maximum:"2147483647" example:"299"`
-	StartDate   string `json:"start_date" validate:"required" example:"01-2026"`
-	EndDate     string `json:"end_date,omitempty" example:"03-2026"`
+	// The monthly price in whole rubles.
+	Price int64 `json:"price" validate:"required" minimum:"0" maximum:"2147483647" example:"299"`
+	// The first month, MM-YYYY.
+	StartDate string `json:"start_date" validate:"required" example:"01-2026"`
+	// The last month, MM-YYYY, inclusive; omitted for an open-ended subscription.
+	EndDate string `json:"end_date,omitempty" example:"03-2026"`
 }
 
 var updateSchema = schemaOf[updateRequest]()

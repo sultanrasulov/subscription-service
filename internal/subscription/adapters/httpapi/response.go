@@ -13,12 +13,15 @@ import (
 // but it describes an optional one exactly, and a request omits the field for
 // the same meaning.
 type subscriptionResponse struct {
-	ID          string `json:"id" format:"uuid" example:"01963b4e-7c1a-7d3e-9f2b-1a2b3c4d5e6f"`
-	ServiceName string `json:"service_name" example:"Yandex Plus"`
-	Price       int64  `json:"price" example:"400"`
-	UserID      string `json:"user_id" format:"uuid" example:"60601fee-2bf1-4721-ae6f-7636e79a0cba"`
-	StartDate   string `json:"start_date" example:"07-2025"`
-	EndDate     string `json:"end_date,omitempty" example:"12-2025"`
+	ID          string `json:"id" validate:"required" format:"uuid" example:"01963b4e-7c1a-7d3e-9f2b-1a2b3c4d5e6f"`
+	ServiceName string `json:"service_name" validate:"required" example:"Yandex Plus"`
+	// The monthly price in whole rubles.
+	Price  int64  `json:"price" validate:"required" example:"400"`
+	UserID string `json:"user_id" validate:"required" format:"uuid" example:"60601fee-2bf1-4721-ae6f-7636e79a0cba"`
+	// The first month, MM-YYYY.
+	StartDate string `json:"start_date" validate:"required" example:"07-2025"`
+	// The last month, MM-YYYY, inclusive; omitted for an open-ended subscription.
+	EndDate string `json:"end_date,omitempty" example:"12-2025"`
 }
 
 func toResponse(s domain.Subscription) subscriptionResponse {
@@ -40,10 +43,10 @@ func toResponse(s domain.Subscription) subscriptionResponse {
 // included; Total counts every match, so a client can tell how many pages
 // there are.
 type listResponse struct {
-	Items  []subscriptionResponse `json:"items"`
-	Limit  int                    `json:"limit" example:"20"`
-	Offset int                    `json:"offset" example:"0"`
-	Total  int                    `json:"total" example:"57"`
+	Items  []subscriptionResponse `json:"items" validate:"required"`
+	Limit  int                    `json:"limit" validate:"required" example:"20"`
+	Offset int                    `json:"offset" validate:"required" example:"0"`
+	Total  int                    `json:"total" validate:"required" example:"57"`
 }
 
 func toListResponse(items []domain.Subscription, q domain.ListQuery, total int) listResponse {
@@ -58,7 +61,8 @@ func toListResponse(items []domain.Subscription, q domain.ListQuery, total int) 
 // totalCostResponse is a total cost in whole rubles. It has no currency and
 // does not repeat the request's parameters.
 type totalCostResponse struct {
-	TotalCost int64 `json:"total_cost" example:"4800"`
+	// The total cost in whole rubles.
+	TotalCost int64 `json:"total_cost" validate:"required" example:"4800"`
 }
 
 // formatMonth writes a month as MM-YYYY.

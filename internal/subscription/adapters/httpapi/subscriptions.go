@@ -118,6 +118,7 @@ func (a *API) update(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary	Delete a subscription
 //	@Tags		subscriptions
+//	@Produce	json
 //	@Param		id	path	string	true	"Subscription ID, a canonical UUID"	format(uuid)
 //	@Success	204	"Deleted"
 //	@Failure	400	{object}	problem.Details	"Malformed ID"

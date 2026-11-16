@@ -66,7 +66,7 @@ Dependencies flow `httpapi → application → domain ← postgres`, and the dom
 - REST + JSON under `/api/v1`. Errors are RFC 9457 problem+json.
 - A handler change updates its swag annotations in the same change.
 - A query or path parameter's example is `extensions(x-example=…)`, never `example(…)`: Swagger 2.0 has no `example` on a non-body parameter, and Swagger UI reads `x-example` instead. `example` stays on schema fields (struct tags).
-- A response field that is always present carries `validate:"required"`, as request fields do; only swag reads the tag. An `omitempty` field carries none.
+- A response field that is always present carries `validate:"required"`, as required request fields do. On a response only swag reads the tag; on a request the HTTP adapter also reads it to know which body fields are required. An `omitempty` field carries none.
 - A request or response field's comment is its Swagger description: state its format or unit there (`MM-YYYY`, whole rubles). These comments are API documentation, the one exception to "comments explain why".
 - Request bodies go only through the strict decoder (design §4.3).
 - Don't change the public contract (paths, fields, status codes) without updating the design first.

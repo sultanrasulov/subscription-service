@@ -17,8 +17,8 @@ const ContentType = "application/problem+json"
 // FieldError is one invalid request field. It is an extension member of the
 // problem details object, under "errors".
 type FieldError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
+	Field   string `json:"field" validate:"required"`
+	Message string `json:"message" validate:"required"`
 }
 
 // Details is an RFC 9457 problem details object.
@@ -27,9 +27,9 @@ type FieldError struct {
 // (RFC 9457 §4.2.1). The members are declared in the order RFC 9457 lists
 // them, which is the order encoding/json writes them.
 type Details struct {
-	Type   string       `json:"type"`
-	Title  string       `json:"title"`
-	Status int          `json:"status"`
+	Type   string       `json:"type" validate:"required"`
+	Title  string       `json:"title" validate:"required"`
+	Status int          `json:"status" validate:"required"`
 	Detail string       `json:"detail,omitempty"`
 	Errors []FieldError `json:"errors,omitempty"`
 }

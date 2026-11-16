@@ -42,7 +42,7 @@ approves; new dependencies; new make targets; new CI jobs.
 |---|---|---|
 | 1 | Recovery and rollback use golang-migrate's own CLI, `go run -tags pgx5 github.com/golang-migrate/migrate/v4/cmd/migrate`, against the database `make db` publishes (#87) | Its version is the one in `go.mod`: no second pin (§10.5), no new dependency, `go.mod` and `go.sum` unchanged (verified). The tool owns the semantics of `force`. Rejected: the `migrate/migrate` image (a second version), `UPDATE schema_migrations` through psql (repeats the tool's internals), a make target (an interface for a rare manual step) |
 | 2 | A dirty version N is forced to N−1, never N; for N = 1 it is `-1` (no version), never `0` | Every migration runs in `BEGIN … COMMIT`, so a failed one leaves the schema at N−1 (verified: the failed migration's column is absent) |
-| 3 | Fields always present in a response get `validate:"required"`; formats and units go into field comments, which swag turns into `description`. No `--requiredByDefault`, no `pattern` (#88) | Request structs already use the tag only for swag; no validator library exists. With the flag, a new `omitempty` field without a marker would be documented as required, which is false; a forgotten tag only gives a weaker, true statement. A `pattern` would be a second copy of the `MM-YYYY` rule, which lives in the parser |
+| 3 | Fields always present in a response get `validate:"required"`; formats and units go into field comments, which swag turns into `description`. No `--requiredByDefault`, no `pattern` (#88) | Request structs already carry the tag, which swag and the HTTP adapter's body reader both read; on a response only swag reads it. No validator library exists. With the flag, a new `omitempty` field without a marker would be documented as required, which is false; a forgotten tag only gives a weaker, true statement. A `pattern` would be a second copy of the `MM-YYYY` rule, which lives in the parser |
 | 4 | The smoke test requires `basePath` `/api/v1` and exactly the six documented operations (#89). Validation against the Swagger 2.0 schema stays a one-off check | swag exits 0 without a warning when a handler loses its `@Router`, and the operation disappears from the specification (verified). The specification exists only in the built image, which only smoke sees. An automated schema validation would need a new dependency |
 | 5 | The final review covers the whole repository, by a reviewer with a fresh context. Each finding is confirmed by a probe or a failing test before it is fixed, and fixed only once the user approves it | The author shares the code's blind spots, and phase 5 has almost no diff of its own to review |
 | 6 | govulncheck runs once in the review, as `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`; a CI job is a §13 revisit trigger (#90) | A command, not a pinned file, so §10.5 holds. A job would add a pinned action and fail unrelated pull requests whenever a new advisory appears; Dependabot already updates weekly |
@@ -137,7 +137,9 @@ Commits, in this order:
   - 404;
   - 405 with `Allow` on `POST /total-cost`;
   - 413 (a body over 1 MiB) and 415;
-  - 503: `docker compose pause postgres`, answered after the request timeout;
+  - 503: `docker compose pause postgres`. Only a request that already holds a pooled
+    connection waits for the request timeout and gets 503; one that opens a new
+    connection gets 500 when the connect timeout ends first (found here, handed to Task 2);
   - 500: `docker compose stop postgres`;
   - every error arrives as `application/problem+json`.
 
