@@ -1,28 +1,28 @@
 package domain
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+
+	"github.com/sultanrasulov/subscription-service/internal/shared/valueobject"
+)
+
+// userIDKind tells user IDs apart from every other identifier.
+type userIDKind struct{}
 
 // UserID identifies the user a subscription belongs to. Users are not checked
 // for existence; the ID is taken as given.
 //
-// It is a type of its own rather than a bare UUID, so a user ID cannot be
-// passed where a subscription ID is expected. The zero value is not a valid
-// user ID; IsZero reports it.
-type UserID struct {
-	id uuid.UUID
-}
+// Its kind is its own, so a user ID cannot be passed where a subscription ID is
+// expected. The zero value is not a valid user ID; IsZero reports it, and a
+// filter uses it to mean "any user".
+type UserID = valueobject.ID[userIDKind]
 
 // NewUserID returns the user ID, or ErrNilUserID for the nil UUID.
 func NewUserID(id uuid.UUID) (UserID, error) {
-	if id == uuid.Nil {
+	// The nil UUID is the only value NewID rejects.
+	u, err := valueobject.NewID[userIDKind](id)
+	if err != nil {
 		return UserID{}, ErrNilUserID
 	}
-	return UserID{id: id}, nil
+	return u, nil
 }
-
-// UUID returns the user ID as a UUID.
-func (u UserID) UUID() uuid.UUID { return u.id }
-
-// IsZero reports whether u is the zero value, which is not a valid user ID.
-// A filter uses it to mean "any user".
-func (u UserID) IsZero() bool { return u.id == uuid.Nil }

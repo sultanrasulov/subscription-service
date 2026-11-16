@@ -15,20 +15,22 @@ import (
 func TestTypes_HoldPrivateValuesOnly(t *testing.T) {
 	t.Parallel()
 
-	for _, v := range []any{
-		domain.MonthYear{},
-		domain.Price{},
-		domain.UserID{},
-		domain.ServiceName{},
-		domain.SubscriptionPeriod{},
-		domain.CalculationPeriod{},
-		domain.Subscription{},
+	// Named here, because an identifier's own type name is its generic
+	// instantiation, which spells out the full path of its kind.
+	for name, v := range map[string]any{
+		"MonthYear":          domain.MonthYear{},
+		"Price":              domain.Price{},
+		"UserID":             domain.UserID{},
+		"SubscriptionID":     domain.SubscriptionID{},
+		"ServiceName":        domain.ServiceName{},
+		"SubscriptionPeriod": domain.SubscriptionPeriod{},
+		"CalculationPeriod":  domain.CalculationPeriod{},
+		"Subscription":       domain.Subscription{},
 	} {
-		typ := reflect.TypeOf(v)
-		t.Run(typ.Name(), func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			checkPrivateValues(t, typ, typ.Name())
+			checkPrivateValues(t, reflect.TypeOf(v), name)
 		})
 	}
 }

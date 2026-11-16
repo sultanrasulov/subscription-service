@@ -1,7 +1,5 @@
 package domain
 
-import "github.com/google/uuid"
-
 // Subscription is one record of a user paying a monthly price for a service
 // during a subscription period. It is the only aggregate: its state changes
 // only through NewSubscription and Update.
@@ -11,7 +9,7 @@ import "github.com/google/uuid"
 // nil subscription. The methods use pointer receivers because Update changes
 // the subscription.
 type Subscription struct {
-	id     uuid.UUID
+	id     SubscriptionID
 	userID UserID
 	name   ServiceName
 	price  Price
@@ -27,8 +25,8 @@ type Subscription struct {
 // first invalid one is reported with the error its constructor gives the
 // equivalent input: ErrNilSubscriptionID, ErrNilUserID, ErrEmptyServiceName or
 // ErrInvalidMonth. A zero price is valid.
-func NewSubscription(id uuid.UUID, userID UserID, name ServiceName, price Price, period SubscriptionPeriod) (Subscription, error) {
-	if id == uuid.Nil {
+func NewSubscription(id SubscriptionID, userID UserID, name ServiceName, price Price, period SubscriptionPeriod) (Subscription, error) {
+	if id.IsZero() {
 		return Subscription{}, ErrNilSubscriptionID
 	}
 	if userID.IsZero() {
@@ -41,7 +39,7 @@ func NewSubscription(id uuid.UUID, userID UserID, name ServiceName, price Price,
 }
 
 // ID returns the subscription's ID.
-func (s *Subscription) ID() uuid.UUID { return s.id }
+func (s *Subscription) ID() SubscriptionID { return s.id }
 
 // UserID returns the user the subscription belongs to.
 func (s *Subscription) UserID() UserID { return s.userID }

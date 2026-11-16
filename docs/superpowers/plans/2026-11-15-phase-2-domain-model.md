@@ -79,6 +79,22 @@ Not done here; the phase 3 plan decides each one.
 5. Invalid UTF-8 can arrive only through a query string: `encoding/json` replaces it with U+FFFD in a body.
 6. A new migration adds a CHECK constraint that repeats the characters rule (`service_name !~ '[[:cntrl:]]'`); the first migration is not edited. Verified: Postgres's `[[:cntrl:]]` matches ESC, DEL, NEL, U+009B, U+009F and tab, but not Cyrillic, NBSP or U+200B, under both `pg_c_utf8` and the `C` collation, exactly as `unicode.IsControl` does. NUL and invalid UTF-8 need no constraint: Postgres rejects them itself.
 
+## Amendment: typed identifiers (decision #76)
+
+Made after Task 5, in its own commit `refactor(domain): add typed identifiers as shared value objects`, before Task 6. Tasks 1–5 below record what they delivered at the time; this section and Task 6 describe the code from here on.
+
+- **Why:** Task 5 gave the aggregate a bare `uuid.UUID` ID while the user ID was already a value object, so the model was inconsistent, and a second identifier would have repeated `UserID` line by line.
+- **What:**
+  - `internal/shared/valueobject` with `ID[K any]`, `NewID[K](uuid.UUID) (ID[K], error)` rejecting the nil UUID with `ErrNilID`, `UUID()` and `IsZero()`. The package admits only value objects that every bounded context may use; it has no serialization and no helpers.
+  - `UserID` becomes `valueobject.ID[userIDKind]`; its exported API is unchanged. New `SubscriptionID = valueobject.ID[subscriptionIDKind]` with `NewSubscriptionID`, which returns `ErrNilSubscriptionID`.
+  - `NewSubscription(id SubscriptionID, …)` and `ID() SubscriptionID`.
+  - depguard: a strict `shared` rule (standard library, uuid, other `shared` packages); the domain may import `internal/shared/`; platform, the application and both adapters may not, so outside the domain identifiers are created only through the domain's constructors.
+- **Rule change:** every typed identifier has `IsZero`, because it comes with the shared type; the "only where a consumer needs it" rule still holds for everything else.
+- **Known pitfalls (verified):**
+  - Go infers `K` from an assignment such as `var f func(uuid.UUID) (domain.UserID, error) = valueobject.NewID`, so code outside the domain can call `NewID` for an unexported kind. Its error would then be `ErrNilID`, outside the domain's categories, and reach the client as a 500. depguard closes that path for the application and both adapters; the nil check inside `NewID` stays as a second line of defense for future bounded contexts.
+  - The domain's allow entry needs the trailing slash (`…/internal/shared/`). Without it, a sibling such as `internal/sharedevil` would match the prefix.
+  - Declaring a new identifier with the marker of an existing one compiles. `TestIdentifiers_HaveDistinctKinds` catches it.
+
 ---
 
 ### Task 1: Errors, `MonthYear` and the structure test
@@ -261,9 +277,9 @@ Commit: `feat(domain): add queries and repository ports`
 - the ports:
   - `Repository`:
     - `Create(ctx context.Context, s Subscription) error`
-    - `Get(ctx context.Context, id uuid.UUID) (Subscription, error)`
+    - `Get(ctx context.Context, id SubscriptionID) (Subscription, error)`
     - `Update(ctx context.Context, s Subscription) error`
-    - `Delete(ctx context.Context, id uuid.UUID) error`
+    - `Delete(ctx context.Context, id SubscriptionID) error`
     - `List(ctx context.Context, q ListQuery) (items []Subscription, total int, err error)`
   - `TotalCostReader`:
     - `TotalCost(ctx context.Context, q TotalCostQuery) (int64, error)`
@@ -271,5 +287,5 @@ Commit: `feat(domain): add queries and repository ports`
 **Done when:**
 - [ ] a zero period in `NewTotalCostQuery` gives `ErrInvalidMonth`; a valid query survives a round trip;
 - [ ] for the whole phase, `make lint test` is green;
-- [ ] `go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./internal/subscription/domain` prints only the package itself and `github.com/google/uuid`;
+- [ ] `go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./internal/subscription/domain` prints only the package itself, `internal/shared/valueobject` and `github.com/google/uuid`;
 - [ ] CI is green on the pull request.

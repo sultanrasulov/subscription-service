@@ -13,7 +13,7 @@ import (
 // fields is everything NewSubscription takes, so a test can start from a
 // valid set and break one field at a time.
 type fields struct {
-	id     uuid.UUID
+	id     domain.SubscriptionID
 	userID domain.UserID
 	name   domain.ServiceName
 	price  domain.Price
@@ -24,7 +24,7 @@ func validFields(t *testing.T) fields {
 	t.Helper()
 
 	return fields{
-		id:     uuid.MustParse("01963b4e-7c1a-7d3e-9f2b-1a2b3c4d5e6f"),
+		id:     mustSubscriptionID(t, uuid.MustParse("01963b4e-7c1a-7d3e-9f2b-1a2b3c4d5e6f")),
 		userID: mustUserID(t, uuid.MustParse("60601fee-2bf1-4721-ae6f-7636e79a0cba")),
 		name:   mustServiceName(t, "Yandex Plus"),
 		price:  mustPrice(t, 400),
@@ -53,7 +53,7 @@ func TestNewSubscription_KeepsEveryField(t *testing.T) {
 	s := mustSubscription(t, f)
 
 	if s.ID() != f.id {
-		t.Errorf("ID() = %s, want %s", s.ID(), f.id)
+		t.Errorf("ID() = %s, want %s", s.ID().UUID(), f.id.UUID())
 	}
 	if s.UserID() != f.userID {
 		t.Errorf("UserID() = %s, want %s", s.UserID().UUID(), f.userID.UUID())
@@ -93,7 +93,7 @@ func TestNewSubscription_RejectsZeroFields(t *testing.T) {
 		spoil func(*fields)
 		want  error
 	}{
-		{"nil ID", func(f *fields) { f.id = uuid.Nil }, domain.ErrNilSubscriptionID},
+		{"zero ID", func(f *fields) { f.id = domain.SubscriptionID{} }, domain.ErrNilSubscriptionID},
 		{"zero user ID", func(f *fields) { f.userID = domain.UserID{} }, domain.ErrNilUserID},
 		{"zero service name", func(f *fields) { f.name = domain.ServiceName{} }, domain.ErrEmptyServiceName},
 		{"zero period", func(f *fields) { f.period = domain.SubscriptionPeriod{} }, domain.ErrInvalidMonth},
@@ -139,7 +139,7 @@ func TestSubscription_UpdateReplacesNamePriceAndPeriod(t *testing.T) {
 	}
 	if s.ID() != f.id || s.UserID() != f.userID {
 		t.Errorf("Update() changed the identity: ID %s, user %s, want %s, %s",
-			s.ID(), s.UserID().UUID(), f.id, f.userID.UUID())
+			s.ID().UUID(), s.UserID().UUID(), f.id.UUID(), f.userID.UUID())
 	}
 }
 
