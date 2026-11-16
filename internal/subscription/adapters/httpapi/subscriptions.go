@@ -114,6 +114,30 @@ func (a *API) update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toResponse(s))
 }
 
+// remove deletes a subscription.
+//
+//	@Summary	Delete a subscription
+//	@Tags		subscriptions
+//	@Param		id	path	string	true	"Subscription ID, a canonical UUID"	format(uuid)
+//	@Success	204	"Deleted"
+//	@Failure	400	{object}	problem.Details	"Malformed ID"
+//	@Failure	404	{object}	problem.Details	"No such subscription"
+//	@Failure	500	{object}	problem.Details
+//	@Failure	503	{object}	problem.Details	"The request timed out"
+//	@Router		/subscriptions/{id} [delete]
+func (a *API) remove(w http.ResponseWriter, r *http.Request) {
+	id, fieldErr, ok := pathID(r)
+	if !ok {
+		invalid(w, []problem.FieldError{fieldErr})
+		return
+	}
+	if err := a.svc.Delete(r.Context(), id); err != nil {
+		a.fail(w, r, "delete subscription", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // list returns one page of subscriptions.
 //
 //	@Summary		List subscriptions
