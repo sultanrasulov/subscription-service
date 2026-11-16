@@ -55,6 +55,12 @@ func toListResponse(items []domain.Subscription, q domain.ListQuery, total int) 
 	return resp
 }
 
+// totalCostResponse is a total cost in whole rubles. It has no currency and
+// does not repeat the request's parameters.
+type totalCostResponse struct {
+	TotalCost int64 `json:"total_cost" example:"4800"`
+}
+
 // formatMonth writes a month as MM-YYYY.
 func formatMonth(m domain.MonthYear) string {
 	return fmt.Sprintf("%02d-%04d", int(m.Month()), m.Year())

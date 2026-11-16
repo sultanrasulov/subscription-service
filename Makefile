@@ -10,7 +10,7 @@ GOLANGCI_LINT := bin/golangci-lint-$(GOLANGCI_LINT_VERSION)
 # adapter, and the error schema from the problem package.
 SWAG_DIRS := ./cmd/subscription-service,./internal/subscription/adapters/httpapi,./internal/platform/problem
 
-.PHONY: help swagger build db run up down logs test test-unit lint pre-commit-install pre-commit-run
+.PHONY: help swagger build db run up down logs test test-unit smoke lint pre-commit-install pre-commit-run
 
 help: ## List the targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -44,6 +44,17 @@ test: ## Run all tests with the race detector (integration tests need Docker)
 
 test-unit: ## Run unit tests only, without Docker
 	go test -short ./...
+
+# The smoke test skips when SMOKE_BASE_URL is unset, and a skip passes, so the
+# address is always set here: from the shell, or else from the port compose
+# published for the app. If compose finds no running app, the target fails
+# instead of running the test without an address. -count=1, because the stack
+# changes between runs while the test does not.
+smoke: ## Check a running stack end to end through its public API (make up first)
+	@if [ -n "$${SMOKE_BASE_URL+set}" ]; then url=$$SMOKE_BASE_URL; \
+	elif port=$$(docker compose port app 8080) && [ -n "$$port" ]; then url=http://$$port; \
+	else echo "make smoke: no running app; run make up first, or set SMOKE_BASE_URL" >&2; exit 1; fi; \
+	SMOKE_BASE_URL=$$url go test ./test/smoke -count=1 -v
 
 lint: $(GOLANGCI_LINT) ## Run golangci-lint at the version in .golangci-lint-version
 	$(GOLANGCI_LINT) run

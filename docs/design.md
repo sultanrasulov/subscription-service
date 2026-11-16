@@ -200,6 +200,7 @@ subscription-service/
 │       ├── jsonbody/              # strict reading of a JSON object body: content type, size, structure, duplicate keys
 │       └── httpserver/            # server, middleware, /health, /ready, Swagger, graceful shutdown
 ├── migrations/                    # versioned SQL migrations, embedded into the binary
+├── test/smoke/                    # black-box smoke test of the composed stack, through the public API only
 ├── docs/
 │   ├── design.md                  # this document
 │   └── swagger/                   # generated specification, embedded into the binary, not committed
@@ -285,6 +286,14 @@ Any endpoint can also return 500 on an unexpected failure, with no internal deta
 
 The total-cost path does not collide with the `{id}` path. The standard router in Go 1.22+ prefers the literal segment.
 
+Other methods on `/api/v1/subscriptions/total-cost` follow from the router:
+- `PUT` and `DELETE` reach the `{id}` routes with `total-cost` as the ID, which is not a UUID → 400 on field `id`;
+- `POST` and `PATCH` → 405, whose `Allow` header also lists the methods of the `{id}` routes. This is a known limitation, accepted.
+
+A 405 for `PUT` and `DELETE` is not worth its cost:
+- a route for the path with no method conflicts with `GET …/{id}`, and the router refuses to register it;
+- explicit `PUT` and `DELETE` routes on the path would answer 405 with `Allow: GET, HEAD`, while the router answers `POST` with a different `Allow`. One resource would then advertise two sets of methods, against RFC 9110 §10.2.1.
+
 ### 4.2 Representations
 
 **Create request:**
@@ -362,11 +371,18 @@ The null rule also needs explanation. In `encoding/json`, a JSON `null` decoded 
 - An absent parameter means no filter.
 - A parameter that is present but empty (`?user_id=`) → 400 `must not be empty`.
 - A repeated parameter → 400 `must not be repeated`.
-- Every parameter error is reported in one response, in a fixed order: `user_id`, `service_name`, then the parameters of the endpoint (`limit`, `offset` for a list), so the same mistakes always give the same response.
+- Every parameter error is reported in one response, in a fixed order: `user_id`, `service_name`, then the parameters of the endpoint (`limit`, `offset` for a list; `from`, `to` for total cost), so the same mistakes always give the same response.
 - Unknown parameters are ignored, because proxies and tracking tools add them (`utm_*`, `_=`).
 - `user_id` follows the `UserID` rules: a canonical, non-nil UUID.
 - `service_name` is normalized like stored names and matched against them case-insensitively.
-- Total cost only: `from` and `to` are required, use `MM-YYYY` with years 2000–2100 (the same `MonthYear` rules as stored dates), and must satisfy `from ≤ to`. Otherwise → 400, reported on field `to` for an inverted period.
+- Total cost only: `from` and `to` are required, use `MM-YYYY` with years 2000–2100 (the same `MonthYear` rules as stored dates), and must satisfy `from ≤ to`. Otherwise → 400, with the same messages as the dates of a body:
+
+  | Situation | Message |
+  |---|---|
+  | The parameter is absent | `is required` |
+  | Not `MM-YYYY` | `must be in MM-YYYY format` |
+  | Month or year out of range | `month must be between 01 and 12`, `year must be between 2000 and 2100` |
+  | `to` before `from` | on field `to`: `must not be before from`. Checked only when both months are valid, so one mistake gives one error |
 
 **Pagination** (list only):
 - `limit` defaults to 20 and must be an integer from 1 to 100. Anything else → 400 `must be an integer between 1 and 100`; values above 100 are not silently capped.
@@ -500,6 +516,7 @@ Neither check is enough alone. The index is used even when the value was lower-c
   - The price is widened to a 64-bit integer before multiplying. A 32-bit product would overflow at the maximum price × 2 months.
   - The database sums with arbitrary precision (`SUM` over 64-bit integers returns `numeric`). The result is cast back to a 64-bit integer, which fails with an error if it does not fit. The API then returns 500 and logs the error, instead of losing precision silently. This was verified: the cast reports `bigint out of range`.
   - In practice: one record contributes at most 2 147 483 647 × 1 212 ≈ 2.6·10¹², so reaching the 64-bit limit takes about 3.5 million maximum-price records in a single query.
+  - A JavaScript client reads an integer above 2^53 − 1 inexactly (RFC 7493 §2.2). A total reaches that bound at about 3 460 maximum-price records over the whole range of years. Accepted: the API returns the exact integer, and a client that needs more reads it as a big integer.
 
 ## 6. Application layer
 
@@ -593,6 +610,7 @@ Make is the developer entry point. Go code still compiles without it, and the re
 | `test-unit` | Unit tests only. Integration tests skip themselves in short mode |
 | `lint` | golangci-lint |
 | `up`, `down`, `logs` | Start the compose stack and wait until it is healthy; stop it; follow its logs |
+| `smoke` | Run the smoke test (§11) against a running stack, after `make up`. The address comes from `docker compose port`, so `APP_PORT` needs no second definition, and the target fails if it cannot find one; `SMOKE_BASE_URL` points the test at any other stack. `COMPOSE_PROJECT_NAME=smoke make up smoke` checks a stack of its own and leaves the development database alone |
 | `pre-commit-install`, `pre-commit-run` | Install the git hook that runs the pre-commit checks on every commit; run them on every file. pre-commit itself is installed once per machine |
 
 **Pre-commit hooks** run the fast checks on every commit, so a slip is caught before it is committed: whitespace and line endings, YAML syntax, merge-conflict markers, large files, private keys, a commit straight to `main`, then `go mod tidy -diff` and `make lint`, the same commands as CI. Tests are left to `make test` and CI, because they are too slow for a commit. The hooks are a local convenience, opt-in and skippable with `--no-verify`, so CI remains the gate for lint, tidiness and tests; a reviewer who only runs `docker compose up` needs nothing.
@@ -639,7 +657,7 @@ The workflow runs on pushes to `main` and on pull requests to `main`, so every p
 |---|---|
 | lint | golangci-lint at the version in `.golangci-lint-version`. It must be built with a Go version ≥ the module's `go` directive, so a Go update moves this pin too |
 | test | All tests, including integration tests on the runner's Docker |
-| smoke | Start the compose stack and wait until it is healthy. Check that `/health` and `/ready` return 200 and that `/swagger/doc.json` is a Swagger 2.0 document. From phase 3, also require at least one documented path, then create a subscription with POST and read it back with GET through its `Location`, the one end-to-end check of the built image against a real database. Phase 1 has no endpoints yet, and `/health` and `/ready` are not in Swagger, so that check would fail there. Stop the app and require exit 0: an entrypoint that leaves a shell as PID 1 does not forward SIGTERM, so Docker kills the app with 137, and a broken shutdown exits non-zero. Print the logs on failure; tear down |
+| smoke | Start the compose stack and wait until it is healthy, then run `make smoke`. The checks live in a Go test (§11) and the job only orchestrates them, so they run the same way on a developer's machine. The test checks that `/health` and `/ready` return 200, that `/swagger/doc.json` is a Swagger 2.0 document with at least one documented path, and that Swagger UI is served; then it creates a subscription for a user of its own with POST, reads it back with GET through its `Location`, and requires its total cost over a calculation period it overlaps. This is the one end-to-end check of the built image against a real database. Then stop the app and require exit 0: an entrypoint that leaves a shell as PID 1 does not forward SIGTERM, so Docker kills the app with 137, and a broken shutdown exits non-zero. Print the logs on failure; tear down |
 
 Every action is pinned to a full commit SHA, with its version in a comment. GitHub's security hardening guide names the full SHA as the only immutable reference to an action, and Dependabot updates both the SHA and the comment.
 
@@ -674,10 +692,12 @@ Every action is pinned to a full commit SHA, with its version in a comment. GitH
 | Domain unit tests | Every value object and the aggregate: valid and invalid cases, normalization, boundaries (years 1999/2000 and 2100/2101, months 0/13, prices −1/0/max/max+1, names of 100/101 characters, Cyrillic character counting, control characters and invalid UTF-8 in names), the nil user and subscription IDs and their distinct kinds, the subscription period (end before start, equal start and end, open-ended, value equality, and that it cannot be changed after construction), invalid zero values rejected by the aggregate | table-driven Go tests |
 | HTTP adapter tests | Every endpoint, through an in-process HTTP recorder, with the real application service over hand-written in-memory fakes of the ports. Covers: status codes, `Location`, response shapes (`items` never `null`, `end_date` omitted), every rule in §4.3, including the decoding traps (`null` in a required field, duplicate keys, `400.0`, a non-object body, trailing data), 413 and 415, 503 when a port call outlives the request deadline, problem+json bodies, router 404/405 as problem+json with `Allow`, all field errors in one response in schema order | standard library |
 | Postgres integration tests | Repository CRUDL and not-found paths; filters; case-insensitive Cyrillic matching, including the index check (§5.2); ordering, pagination and the total; database constraints; migrations up → down → up. **Total cost** for every §2.7 case: inside, overlapping the start, overlapping the end, covering, open-ended, single-month period, touching boundaries, disjoint, price 0, no rows, maximum price × 1 212 months without overflow | testcontainers with the image from `compose.yaml` (§10.5), initialized with the `C` locale and UTF8 encoding (§5.2); one container per test package; each test creates its own database from `template0` (UTF8, `C` locale) and drops it at the end, so tests run in parallel |
-| Smoke | The composed stack starts; health, readiness and Swagger respond | CI (§10.4) |
+| Smoke | The composed stack starts; health, readiness and Swagger respond; create, get and total cost work through the public API, for a user of its own | A black-box Go test in `test/smoke` (`make smoke`), against the stack the CI job starts (§10.4) |
 
 - Fakes are hand-written; there is no mock generator.
+- The in-memory fake of `TotalCostReader` reads the fake repository's store and runs the same §2.7 cases as the Postgres integration tests: one table of cases serves both, so the fake cannot drift from the database on these cases.
 - Integration tests skip themselves in short mode.
+- The smoke test skips itself only when `SMOKE_BASE_URL` is not set, so `make test` needs no stack. A value that is set but empty, or not an absolute `http` or `https` URL, fails the test: `go test` counts a skipped test as a pass, so a smoke check that could skip by mistake would leave CI green without checking anything. `make smoke` always sets the variable or fails itself. The test uses only the standard library and uuid, never `internal/`, so it can reach the service only as a client does.
 
 ## 12. Delivery plan and workflow
 
@@ -765,7 +785,7 @@ While this document is a draft, every decision is written in its final form wher
 | 31 | Logging | slog JSON, request middleware, each error logged once. *(Format made selectable by #65.)* |
 | 32 | Versions | Minimums only: Go 1.27, PostgreSQL 17 (`pg_c_utf8`). Exact versions live only in `go.mod`, `Dockerfile` and `compose.yaml`. Alpine build image with `make`, Alpine runtime. *(List of version files amended by #63.)* |
 | 33 | Tests | Domain unit tests, HTTP tests, testcontainers |
-| 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) *(graceful stop added by #73; documented path and create → get added by #82.)* |
+| 34 | CI | Lint + tests + compose smoke (`/health`, `/ready`, Swagger spec) *(graceful stop added by #73; documented path and create → get added by #82; the checks moved into a Go test by #86.)* |
 | 35 | Spec | `docs/design.md`, no code: intent, rules and decisions |
 | 36 | Branches | One short-lived branch per phase, named `type/short-description` (lowercase, hyphens, no ticket ID). One pull request per phase, merged into `main` with a merge commit (no squash) when CI is green. Phase 0, which has no CI yet, merges after the spec is approved. *(Phase 0 clause amended by #62.)* |
 | 37 | Module | `github.com/sultanrasulov/subscription-service` |
@@ -813,5 +833,8 @@ While this document is a draft, every decision is written in its final form wher
 | 79 | Strict query parsing | The query string is parsed strictly; any parse error → 400 `query string is malformed`; empty → `must not be empty`, repeated → `must not be repeated`; all parameter errors together, in a fixed order (§4.3) |
 | 80 | JSON body reader | The domain-neutral part of strict body decoding (content type, size, structure, duplicate keys) lives in `internal/platform/jsonbody`; field typing and validation stay in the HTTP adapter; unknown and then duplicate fields follow the schema's fields, each in alphabetical order; every problem with the body, including one that cannot be read, is a client error from the reader, never a server error (§3.1, §4.3) |
 | 81 | Delete returns the subscription | `Repository.Delete` returns the deleted subscription, through `DELETE … RETURNING`, so the "subscription deleted" event carries the user ID without a second query (§2.5, §8) |
-| 82 | Smoke end to end | The smoke job also requires a documented path and creates a subscription, then reads it back through its `Location` (§10.4) |
+| 82 | Smoke end to end | The smoke job also requires a documented path and creates a subscription, then reads it back through its `Location` (§10.4) *(Total cost check added by #85; moved into a Go test by #86.)* |
 | 83 | Nil-UUID checks in the schema | `id` and `user_id` have CHECK constraints against the nil UUID, repeating the domain's rule; whitespace normalization is deliberately not repeated (§5.1) |
+| 84 | Total-cost parameters and path | `from` and `to` are required; their messages are those of a body's dates, with an absent one → `is required` and an inverted period → `to: must not be before from`, checked only when both months are valid; parameter errors in the order `user_id`, `service_name`, `from`, `to`. `PUT` and `DELETE` on the total-cost path reach the `{id}` routes and get 400 on `id`, because a 405 would need routes that either conflict with `GET …/{id}` or advertise a second `Allow` for the same resource (§4.1, §4.3) |
+| 85 | Smoke total cost | After create → get, the smoke job also requires the created subscription's total cost for its user over a calculation period it overlaps: the one check that the composition root wires the total-cost reader and that its query runs in the built image (§10.4) *(Moved into a Go test by #86.)* |
+| 86 | Smoke checks as a Go test | The smoke checks live in `test/smoke`, a black-box Go test that uses only the standard library and uuid, never `internal/`, so it sees only the public API. It skips only when `SMOKE_BASE_URL` is not set; a value that is set but unusable fails it, and `make smoke` fails rather than leave the variable unset, because a skipped test passes and would turn CI green without a check. Each run creates a user of its own, so it can run again on the same stack. `make smoke` runs it against a running stack; the CI job only starts the stack, runs `make smoke`, stops the app and tears down. Checks written as YAML lines could run only in CI and were neither linted nor reviewed as code (§10.1, §10.4, §11) |
