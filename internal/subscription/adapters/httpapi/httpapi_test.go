@@ -50,6 +50,21 @@ func (e env) do(ctx context.Context, method, target, body string) *httptest.Resp
 	return w
 }
 
+// newRequest builds a request with the given content type.
+func newRequest(t *testing.T, method, target, body, contentType string) *http.Request {
+	t.Helper()
+	r := httptest.NewRequestWithContext(t.Context(), method, target, strings.NewReader(body))
+	r.Header.Set("Content-Type", contentType)
+	return r
+}
+
+// serve runs a request through the API.
+func (e env) serve(r *http.Request) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	e.handler.ServeHTTP(w, r)
+	return w
+}
+
 // problemOf decodes a problem+json response.
 func problemOf(t *testing.T, w *httptest.ResponseRecorder) problem.Details {
 	t.Helper()

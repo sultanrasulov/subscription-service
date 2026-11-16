@@ -353,7 +353,7 @@ The null rule also needs explanation. In `encoding/json`, a JSON `null` decoded 
 | `start_date` | yes | `MM-YYYY`, month 01–12, year 2000–2100 | `must be in MM-YYYY format` |
 | `end_date` | no | same format and range; not before `start_date`; omitted or `null` → open-ended | `must not be before start_date` |
 
-**Path:** a malformed `{id}` → 400 for field `id`.
+**Path:** a malformed `{id}` → 400 for field `id`. It is reported alone, before the body is read: the path names the resource, and a body cannot apply to a resource that is not even named. A valid but unknown ID is checked after the body, by the application: 404.
 
 **UUIDs.** Every UUID the API reads, in the path, the body or the query, must be in the canonical form of RFC 9562: 36 characters, `8-4-4-4-12`, hex digits in either case. The braced, `urn:uuid:` and 32-digit forms that UUID libraries also accept → 400, so one resource has one URL. Responses always use lower case.
 

@@ -71,6 +71,49 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toResponse(s))
 }
 
+// update replaces a subscription's service name, price and period. Its ID and
+// user never change.
+//
+//	@Summary		Replace a subscription
+//	@Description	A full replacement: omit end_date to make the subscription open-ended. user_id cannot change, so it is an unknown field here. A malformed ID is reported alone, before the body is read.
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id				path		string					true	"Subscription ID, a canonical UUID"	format(uuid)
+//	@Param			subscription	body		updateRequest			true	"The new service name, price and period"
+//	@Success		200				{object}	subscriptionResponse
+//	@Failure		400				{object}	problem.Details	"Malformed ID, invalid fields or a malformed body"
+//	@Failure		404				{object}	problem.Details	"No such subscription"
+//	@Failure		413				{object}	problem.Details	"Body over 1 MiB"
+//	@Failure		415				{object}	problem.Details	"Content-Type is not application/json"
+//	@Failure		500				{object}	problem.Details
+//	@Failure		503				{object}	problem.Details	"The request timed out"
+//	@Router			/subscriptions/{id} [put]
+func (a *API) update(w http.ResponseWriter, r *http.Request) {
+	id, fieldErr, ok := pathID(r)
+	if !ok {
+		invalid(w, []problem.FieldError{fieldErr})
+		return
+	}
+	obj, err := jsonbody.Read(w, r, maxBodyBytes)
+	if err != nil {
+		a.unreadable(w, r, err)
+		return
+	}
+	in, fieldErrors := readUpdate(obj)
+	if len(fieldErrors) > 0 {
+		invalid(w, fieldErrors)
+		return
+	}
+
+	s, err := a.svc.Update(r.Context(), id, in.name, in.price, in.period)
+	if err != nil {
+		a.fail(w, r, "update subscription", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toResponse(s))
+}
+
 // list returns one page of subscriptions.
 //
 //	@Summary		List subscriptions

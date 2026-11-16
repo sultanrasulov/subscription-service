@@ -52,6 +52,18 @@ func schemaOf[T any]() []field {
 
 var createSchema = schemaOf[createRequest]()
 
+// updateRequest is the body of an update request, a full replacement. It has
+// no user_id: the user of a subscription never changes, so one sent anyway is
+// an unknown field.
+type updateRequest struct {
+	ServiceName string `json:"service_name" validate:"required" maxLength:"100" example:"Kinopoisk"`
+	Price       int64  `json:"price" validate:"required" minimum:"0" maximum:"2147483647" example:"299"`
+	StartDate   string `json:"start_date" validate:"required" example:"01-2026"`
+	EndDate     string `json:"end_date,omitempty" example:"03-2026"`
+}
+
+var updateSchema = schemaOf[updateRequest]()
+
 // createInput is a validated create request.
 type createInput struct {
 	userID domain.UserID
@@ -68,6 +80,25 @@ func readCreate(obj jsonbody.Object) (createInput, []problem.FieldError) {
 		name:   b.serviceName("service_name"),
 		price:  b.price("price"),
 		userID: b.userID("user_id"),
+		period: b.period("start_date", "end_date"),
+	}
+	return in, b.fieldErrors()
+}
+
+// updateInput is a validated update request.
+type updateInput struct {
+	name   domain.ServiceName
+	price  domain.Price
+	period domain.SubscriptionPeriod
+}
+
+// readUpdate validates an update body. The input is usable only when there
+// are no field errors.
+func readUpdate(obj jsonbody.Object) (updateInput, []problem.FieldError) {
+	b := newBody(obj, updateSchema)
+	in := updateInput{
+		name:   b.serviceName("service_name"),
+		price:  b.price("price"),
 		period: b.period("start_date", "end_date"),
 	}
 	return in, b.fieldErrors()
